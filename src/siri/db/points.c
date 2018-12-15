@@ -1,13 +1,5 @@
 /*
  * points.c - Array object for points.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 04-04-2016
- *
  */
 #include <siri/db/points.h>
 #include <logger/logger.h>
@@ -17,7 +9,7 @@
 #include <siri/err.h>
 #include <unistd.h>
 #include <string.h>
-#include <strextra/strextra.h>
+#include <xstr/xstr.h>
 
 #define MAX_ITERATE_MERGE_COUNT 1000
 #define POINTS_MAX_QSORT 250000
@@ -37,11 +29,11 @@ static void POINTS_unzip_raw(
         uint64_t * start_ts,
         uint64_t * end_ts,
         uint8_t has_overlap);
-static void POINTS_sort_while_merge(slist_t * plist, siridb_points_t * points);
-static void POINTS_merge_and_sort(slist_t * plist, siridb_points_t * points);
+static void POINTS_sort_while_merge(vec_t * plist, siridb_points_t * points);
+static void POINTS_merge_and_sort(vec_t * plist, siridb_points_t * points);
 static void POINTS_simple_sort(siridb_points_t * points);
 static inline int POINTS_compare(const void * a, const void * b);
-static void POINTS_highest_and_merge(slist_t * plist, siridb_points_t * points);
+static void POINTS_highest_and_merge(vec_t * plist, siridb_points_t * points);
 static size_t POINTS_strlen_check_ascii(const char * str, uint8_t * is_ascii);
 static void POINTS_output_literal(
         size_t len,
@@ -99,6 +91,21 @@ siridb_points_t * siridb_points_new(size_t size, points_tp tp)
 }
 
 /*
+ * Resize points to a new size. Returns 0 when successful or -1 if failed.
+ */
+int siridb_points_resize(siridb_points_t * points, size_t n)
+{
+    assert( points->len <= n );
+    siridb_point_t * tmp = realloc(points->data, sizeof(siridb_point_t) * n);
+    if (tmp == NULL && n)
+    {
+        return -1;
+    }
+    points->data = tmp;
+    return 0;
+}
+
+/*
  * Returns a copy of points or NULL in case of an error. NULL is also returned
  * if points is NULL.
  */
@@ -127,7 +134,8 @@ siridb_points_t * siridb_points_copy(siridb_points_t * points)
         }
         if (points->tp == TP_STRING)
         {
-            for (size_t i = 0; i < points->len; ++i)
+            size_t i;
+            for (i = 0; i < points->len; ++i)
             {
                 (cpoints->data + i)->val.str =
                         strdup((points->data + i)->val.str);
@@ -144,7 +152,8 @@ void siridb_points_free(siridb_points_t * points)
 {
     if (points->tp == TP_STRING)
     {
-        for (size_t i = 0; i < points->len; ++i)
+        size_t i;
+        for (i = 0; i < points->len; ++i)
         {
             free((points->data + i)->val.str);
         }
@@ -189,11 +198,12 @@ int siridb_points_pack(siridb_points_t * points, qp_packer_t * packer)
     qp_add_type(packer, QP_ARRAY_OPEN);
     if (points->len)
     {
+        size_t i;
         siridb_point_t * point = points->data;
         switch (points->tp)
         {
         case TP_INT:
-            for (size_t i = 0; i < points->len; i++, point++)
+            for (i = 0; i < points->len; i++, point++)
             {
                 qp_add_type(packer, QP_ARRAY2);
                 qp_add_int64(packer, (int64_t) point->ts);
@@ -201,7 +211,7 @@ int siridb_points_pack(siridb_points_t * points, qp_packer_t * packer)
             }
             break;
         case TP_DOUBLE:
-            for (size_t i = 0; i < points->len; i++, point++)
+            for (i = 0; i < points->len; i++, point++)
             {
                 qp_add_type(packer, QP_ARRAY2);
                 qp_add_int64(packer, (int64_t) point->ts);
@@ -209,7 +219,7 @@ int siridb_points_pack(siridb_points_t * points, qp_packer_t * packer)
             }
             break;
         case TP_STRING:
-            for (size_t i = 0; i < points->len; i++, point++)
+            for (i = 0; i < points->len; i++, point++)
             {
                 qp_add_type(packer, QP_ARRAY2);
                 qp_add_int64(packer, (int64_t) point->ts);
@@ -226,7 +236,8 @@ int siridb_points_pack(siridb_points_t * points, qp_packer_t * packer)
 void siridb_points_ts_correction(siridb_points_t * points, double factor)
 {
     siridb_point_t * point = points->data;
-    for (size_t i = 0; i < points->len; i++, point++)
+    size_t i;
+    for (i = 0; i < points->len; i++, point++)
     {
         point->ts *= factor;
     }
@@ -270,11 +281,9 @@ int siridb_points_raw_pack(siridb_points_t * points, qp_packer_t * packer)
  * (err_msg is set when an error has occurred)
  * Use this function only when having at least two 'series' in the list.
  */
-siridb_points_t * siridb_points_merge(slist_t * plist, char * err_msg)
+siridb_points_t * siridb_points_merge(vec_t * plist, char * err_msg)
 {
-#if DEBUG
     assert (plist->len >= 2);
-#endif
     siridb_points_t * points;
     siridb_points_t * tpts = NULL;
     size_t n = 0;
@@ -321,10 +330,8 @@ siridb_points_t * siridb_points_merge(slist_t * plist, char * err_msg)
         i++;
     }
 
-#if DEBUG
     /* we have at least one series left */
     assert (plist->len >= 1);
-#endif
 
     if (plist->len == 1)
     {
@@ -333,7 +340,7 @@ siridb_points_t * siridb_points_merge(slist_t * plist, char * err_msg)
          * list length to 0. We do have to restore the points length since
          * this is decremented by one.
          */
-        points = (siridb_points_t *) slist_pop(plist);
+        points = (siridb_points_t *) vec_pop(plist);
         points->len++;
         return points;
     }
@@ -658,15 +665,17 @@ unsigned char * siridb_points_raw_string(
 
     uint_fast32_t n = end - start;
     size_t * sizes = (size_t *) malloc(sizeof(size_t) * n);
+    size_t * psz = sizes;
+    unsigned char * pdata;
+    unsigned char * cdata;
+    uint_fast32_t i;
+
     if (sizes == NULL)
     {
         return NULL;
     }
 
-    size_t * psz = sizes;
-    unsigned char * pdata;
-
-    for (uint_fast32_t i = start; i < end; ++i, ++psz)
+    for (i = start; i < end; ++i, ++psz)
     {
         *psz = strlen(points->data[i].val.str) + 1;
         *size += *psz;
@@ -681,8 +690,7 @@ unsigned char * siridb_points_raw_string(
     /* when uncompressed, time-stamp size is not included */
     *size += n * ts_sz;
 
-    unsigned char * cdata = (unsigned char *) calloc(
-            *size, sizeof(unsigned char));
+    cdata = (unsigned char *) calloc(*size, sizeof(unsigned char));
     if (cdata == NULL)
     {
         free(sizes);
@@ -695,7 +703,7 @@ unsigned char * siridb_points_raw_string(
     switch (ts_sz)
     {
     case sizeof(uint32_t):
-        for (uint_fast32_t i = start; i < end; ++i)
+        for (i = start; i < end; ++i)
         {
             uint32_t ts = points->data[i].ts;
             memcpy(pdata, &ts, sizeof(uint32_t));
@@ -703,7 +711,7 @@ unsigned char * siridb_points_raw_string(
         }
         break;
     case sizeof(uint64_t):
-        for (uint_fast32_t i = start; i < end; ++i)
+        for (i = start; i < end; ++i)
         {
             memcpy(pdata, &points->data[i].ts, sizeof(uint64_t));
             pdata += sizeof(uint64_t);
@@ -713,7 +721,7 @@ unsigned char * siridb_points_raw_string(
         assert(0);
     }
 
-    for (uint_fast32_t i = start; i < end; ++i, ++psz)
+    for (i = start; i < end; ++i, ++psz)
     {
         memcpy(pdata, points->data[i].val.str, *psz);
         pdata += *psz;
@@ -1142,7 +1150,7 @@ int siridb_points_unzip_string_raw(
     {
         size_t slen;
         points->data[points->len].ts = *tpt;
-        points->data[points->len].val.str = strx_dup(cpt, &slen);
+        points->data[points->len].val.str = xstr_dup(cpt, &slen);
         cpt += slen + 1;
     }
     return 0;
@@ -1266,21 +1274,28 @@ static unsigned char * POINTS_zip_raw(
         size_t * size)
 {
     uint_fast32_t n = end - start;
+    uint_fast32_t i;
+    unsigned char * bits;
+    unsigned char * pt;
+
     *size = n * 16;
     *cinfo = 0xffff;
-    unsigned char * bits = (unsigned char *) malloc(*size);
+
+    bits = (unsigned char *) malloc(*size);
     if (bits == NULL)
     {
         return NULL;
     }
-    unsigned char * pt = bits;
-    for (uint_fast32_t i = start; i < end; ++i)
+
+    pt = bits;
+    for (i = start; i < end; ++i)
     {
         memcpy(pt, &points->data[i].ts, sizeof(uint64_t));
         pt += sizeof(uint64_t);
         memcpy(pt, &points->data[i].val, sizeof(uint64_t));
         pt += sizeof(uint64_t);
     }
+
     return bits;
 }
 
@@ -1321,7 +1336,7 @@ static void POINTS_unzip_raw(
  * This merge method works best when having both a lot of series and having
  * any number of points for each series.
  */
-static void POINTS_highest_and_merge(slist_t * plist, siridb_points_t * points)
+static void POINTS_highest_and_merge(vec_t * plist, siridb_points_t * points)
 {
     siridb_points_t ** m = NULL;
     size_t i, n, l = 0;
@@ -1383,10 +1398,8 @@ static void POINTS_highest_and_merge(slist_t * plist, siridb_points_t * points)
             usleep(3000);
         }
     }
-#if DEBUG
     /* size should be exactly zero */
     assert (n == 0);
-#endif
 }
 
 
@@ -1394,7 +1407,7 @@ static void POINTS_highest_and_merge(slist_t * plist, siridb_points_t * points)
  * This merge method works best for only a few series with possible a lot
  * of points.
  */
-static void POINTS_sort_while_merge(slist_t * plist, siridb_points_t * points)
+static void POINTS_sort_while_merge(vec_t * plist, siridb_points_t * points)
 {
     siridb_points_t ** m;
     size_t i, n;
@@ -1431,17 +1444,15 @@ static void POINTS_sort_while_merge(slist_t * plist, siridb_points_t * points)
             usleep(3000);
         }
     }
-#if DEBUG
     /* size should be exactly zero */
     assert (n == 0);
-#endif
 }
 
 /*
  * This merge method works best when having a lot of series with only one point
  * or when the total number of points it not so high.
  */
-static void POINTS_merge_and_sort(slist_t * plist, siridb_points_t * points)
+static void POINTS_merge_and_sort(vec_t * plist, siridb_points_t * points)
 {
     siridb_points_t ** m;
     size_t i, n;
@@ -1471,11 +1482,8 @@ static void POINTS_merge_and_sort(slist_t * plist, siridb_points_t * points)
             }
         }
     }
-
-#if DEBUG
     /* size should be exactly zero */
     assert (n == 0);
-#endif
 
     usleep(5000);
 
@@ -1494,7 +1502,11 @@ static void POINTS_merge_and_sort(slist_t * plist, siridb_points_t * points)
 
 static inline int POINTS_compare(const void * a, const void * b)
 {
-    return (((siridb_point_t *) a)->ts - ((siridb_point_t *) b)->ts);
+    return (((siridb_point_t *) a)->ts < ((siridb_point_t *) b)->ts)
+        ? -1
+        : (((siridb_point_t *) a)->ts > ((siridb_point_t *) b)->ts)
+        ? 1
+        : 0;
 }
 
 /*

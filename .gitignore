@@ -27,6 +27,7 @@
 *.i*86
 *.x86_64
 *.hex
+*.out
 
 # Debug files
 *.dSYM/
@@ -36,6 +37,7 @@
 *.d
 *.d
 /testdir
+*.log
 
 # Eclipse
 /.settings
@@ -59,6 +61,8 @@ build/
 grammar/cgrammar/
 grammar/jsgrammar/
 grammar/pygrammar/
+grammar/gogrammar/
+grammar/javagrammar/
 
 # Sublime Text
 *.sublime-project
@@ -68,4 +72,15 @@ grammar/pygrammar/
 .vscode/
 
 # Test
+itest/testdir
 test/testdir
+
+# Debian
+debian/.debhelper/
+debian/debhelper-build-stamp
+debian/files
+debian/siridb-server.postrm.debhelper
+debian/siridb-server.substvars
+debian/siridb-server/
+Release/siridb-server.1
+

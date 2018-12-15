@@ -1,13 +1,5 @@
 /*
- * user.c - contains functions for a SiriDB database member.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 10-03-2016
- *
+ * user.c - Contains functions for a SiriDB database user.
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -20,7 +12,7 @@
 #include <siri/db/users.h>
 #include <siri/err.h>
 #include <siri/grammar/grammar.h>
-#include <strextra/strextra.h>
+#include <xstr/xstr.h>
 #include <owcrypt/owcrypt.h>
 #include <string.h>
 
@@ -89,23 +81,34 @@ int siridb_user_set_password(
 
     if (strlen(password) < SIRIDB_MIN_PASSWORD_LEN)
     {
-        sprintf(err_msg, "Password should be at least %d characters.",
-                SIRIDB_MIN_PASSWORD_LEN);
+        if (err_msg != NULL)
+        {
+            sprintf(err_msg,
+                    "Password should be at least %d characters.",
+                    SIRIDB_MIN_PASSWORD_LEN);
+        }
         return -1;
     }
 
     if (strlen(password) > SIRIDB_MAX_PASSWORD_LEN)
     {
-        sprintf(err_msg, "Password should be at most %d characters.",
-                SIRIDB_MAX_PASSWORD_LEN);
+        if (err_msg != NULL)
+        {
+            sprintf(err_msg,
+                    "Password should be at most %d characters.",
+                    SIRIDB_MAX_PASSWORD_LEN);
+        }
         return -1;
     }
 
-    if (!strx_is_graph(password))
+    if (!xstr_is_graph(password))
     {
-        sprintf(err_msg,
-                "Password contains illegal characters. (only graphical "
-                "characters are allowed, no spaces, tabs etc.)");
+        if (err_msg != NULL)
+        {
+            sprintf(err_msg,
+                    "Password contains illegal characters. (only graphical "
+                    "characters are allowed, no spaces, tabs etc.)");
+        }
         return -1;
     }
 
@@ -154,7 +157,7 @@ int siridb_user_set_name(
         return 1;
     }
 
-    if (!strx_is_graph(name))
+    if (!xstr_is_graph(name))
     {
         sprintf(err_msg,
                 "User name contains illegal characters. (only graphical "
@@ -162,7 +165,7 @@ int siridb_user_set_name(
         return 1;
     }
 
-    if (siridb_users_get_user(siridb->users, name, NULL) != NULL)
+    if (siridb_users_get_user(siridb, name, NULL) != NULL)
     {
         snprintf(err_msg,
                 SIRIDB_MAX_SIZE_ERR_MSG,
@@ -198,7 +201,7 @@ int siridb_user_check_access(
 {
     if ((user->access_bit & access_bit) == access_bit)
     {
-        return 1;  // true
+        return 1;  /* true  */
     }
 
     char buffer[SIRIDB_ACCESS_STR_MAX];
@@ -210,7 +213,7 @@ int siridb_user_check_access(
             user->name,
             buffer);
 
-    return 0;   // false
+    return 0;   /* false  */
 }
 
 int siridb_user_cexpr_cb(siridb_user_t * user, cexpr_condition_t * cond)
@@ -238,9 +241,6 @@ int siridb_user_cexpr_cb(siridb_user_t * user, cexpr_condition_t * cond)
  */
 void siridb__user_free(siridb_user_t * user)
 {
-#if DEBUG
-    log_debug("Free user: '%s'", user->name);
-#endif
     free(user->name);
     free(user->password);
     free(user);

@@ -1,13 +1,6 @@
 /*
  * owcrypt.c - One Way Encryption. (used for storing a database user password)
  *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2017, Transceptor Technology
- *
- * changes:
- *  - initial version, 24-02-2017
- *
  * purpose:
  *  - provide an encryption algorithm to prevent password guessing.
  *  - passwords should be stored using one way encryption so the original
@@ -57,11 +50,11 @@ static void owcrypt1(
  *  char[OWCRYPT_SZ] encrypted;
  *  owcrypt("my_password", "saltsalt$1", encrypted);
  *
- *  // Checking can be done like this:
+ *  #  Checking can be done like this:
  *  char[OWCRYPT_SZ] pw;
  *  owcrypt("pasword_to_check", encrypted, pw");
  *  if (strcmp(pw, encrypted) === 0) {
- *      // valid
+ *      #  valid
  *  }
  *
  * Parameters:
@@ -74,6 +67,7 @@ void owcrypt(const char * password, const char * salt, char * encrypted)
     switch (salt[OWCRYPT_SALT_SZ - 1])
     {
     case '0':
+        /* deprecated version */
         owcrypt0(password, salt, encrypted);
         break;
     case '1':
@@ -143,6 +137,7 @@ static void owcrypt1(
     }
 }
 
+/* deprecated */
 static void owcrypt0(
         const char * password,
         const char * salt,

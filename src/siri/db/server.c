@@ -1,13 +1,5 @@
 /*
- * server.c - SiriDB Server.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 17-03-2016
- *
+ * server.c - Each SiriDB database has at least one server.
  */
 #include <assert.h>
 #include <logger/logger.h>
@@ -18,16 +10,17 @@
 #include <siri/db/fifo.h>
 #include <siri/err.h>
 #include <siri/net/promise.h>
-#include <siri/net/socket.h>
+#include <siri/net/stream.h>
+#include <siri/net/tcp.h>
 #include <siri/siri.h>
 #include <siri/version.h>
-#include <strextra/strextra.h>
+#include <xstr/xstr.h>
 #include <string.h>
 
 #define SIRIDB_SERVERS_FN "servers.dat"
 #define SIRIDB_SERVERS_SCHEMA 1
-#define SIRIDB_SERVER_FLAGS_TIMEOUT 5000        // 5 seconds
-#define SIRIDB_SERVER_PROMISES_QUEUE_SIZE 250   // max concurrent promises
+#define SIRIDB_SERVER_FLAGS_TIMEOUT 5000        /* 5 seconds    */
+#define SIRIDB_SERVER_PROMISES_QUEUE_SIZE 250   /* max concurrent promises  */
 #define FMT_AS_IPV6(addr) (strchr(addr, ':') != NULL)
 
 static int SERVER_update_name(siridb_server_t * server);
@@ -50,7 +43,7 @@ static int SERVER_resolve_dns(
         siridb_server_t * server,
         int ai_family,
         uv_getaddrinfo_cb getaddrinfo_cb);
-static void SERVER_on_data(uv_stream_t * client, sirinet_pkg_t * pkg);
+static void SERVER_on_data(sirinet_stream_t * client, sirinet_pkg_t * pkg);
 static void SERVER_cancel_promise(sirinet_promise_t * promise);
 static void SERVER_upd_flag_queue_full(siridb_server_t * server);
 
@@ -102,7 +95,7 @@ siridb_server_t * siridb_server_new(
 
     /* we set the promises later because we don't need one for self */
     server->promises = NULL;
-    server->socket = NULL;
+    server->client = NULL;
 
     /* sets address:port to name property */
     if (SERVER_update_name(server))
@@ -134,11 +127,9 @@ int siridb_server_send_pkg(
         void * data,
         int flags)
 {
-#if DEBUG
-    assert (server->socket != NULL);
+    assert (server->client != NULL);
     assert (server->promises != NULL);
     assert (cb != NULL);
-#endif
     int rc;
     uint8_t n = 0;
     sirinet_promise_t * promise =
@@ -245,7 +236,7 @@ int siridb_server_send_pkg(
 
     uv_write(
             req,
-            (uv_stream_t *) server->socket,
+            server->client->stream,
             &wrbuf,
             1,
             SERVER_write_cb);
@@ -308,18 +299,14 @@ siridb_server_t * siridb_server_register(
 void siridb_server_send_flags(siridb_server_t * server)
 {
 
-#if DEBUG
-    assert (server->socket != NULL);
+    assert (server->client != NULL);
     assert (siridb_server_is_online(server));
-#endif
 
-    sirinet_socket_t * ssocket = server->socket->data;
+    sirinet_stream_t * client = server->client;
 
-#if DEBUG
-    assert (ssocket->siridb != NULL);
-#endif
+    assert (client->siridb != NULL);
 
-    int16_t n = ssocket->siridb->server->flags;
+    int16_t n = client->siridb->server->flags;
     QP_PACK_INT16(buffer, n)
 
     sirinet_pkg_t * pkg = sirinet_pkg_new(0, 3, BPROTO_FLAGS_UPDATE, buffer);
@@ -327,7 +314,7 @@ void siridb_server_send_flags(siridb_server_t * server)
             server,
             pkg,
             SIRIDB_SERVER_FLAGS_TIMEOUT,
-            SERVER_on_flags_update_response,
+            (sirinet_promise_cb) SERVER_on_flags_update_response,
             NULL,
             0))
     {
@@ -401,22 +388,19 @@ int siridb_server_update_address(
  */
 void siridb_server_connect(siridb_t * siridb, siridb_server_t * server)
 {
-#if DEBUG
     /* server->socket must be NULL at this point */
-    assert (server->socket == NULL);
-#endif
+    assert (server->client == NULL);
 
-    server->socket = sirinet_socket_new(SOCKET_SERVER, &SERVER_on_data);
+    server->client = sirinet_stream_new(STREAM_TCP_SERVER, &SERVER_on_data);
 
-    if (server->socket != NULL)
+    if (server->client != NULL)
     {
         struct in_addr sa;
         struct in6_addr sa6;
-        sirinet_socket_t * ssocket = (sirinet_socket_t *) server->socket->data;
-        ssocket->origin = server;
-        ssocket->siridb = siridb;
+        server->client->origin = server;
+        server->client->siridb = siridb;
         siridb_server_incref(server);
-        uv_tcp_init(siri.loop, server->socket);
+        uv_tcp_init(siri.loop, (uv_tcp_t *) server->client->stream);
 
         if (inet_pton(AF_INET, server->address, &sa))
         {
@@ -427,7 +411,7 @@ void siridb_server_connect(siridb_t * siridb, siridb_server_t * server)
             if (req == NULL)
             {
                 ERR_ALLOC
-                sirinet_socket_decref(server->socket);
+                sirinet_stream_decref(server->client);
             }
             else
             {
@@ -435,7 +419,7 @@ void siridb_server_connect(siridb_t * siridb, siridb_server_t * server)
                 uv_ip4_addr(server->address, server->port, &dest);
                 uv_tcp_connect(
                         req,
-                        server->socket,
+                        (uv_tcp_t *) server->client->stream,
                         (const struct sockaddr *) &dest,
                         SERVER_on_connect);
             }
@@ -449,7 +433,7 @@ void siridb_server_connect(siridb_t * siridb, siridb_server_t * server)
             if (req == NULL)
             {
                 ERR_ALLOC
-                sirinet_socket_decref(server->socket);
+                sirinet_stream_decref(server->client);
             }
             else
             {
@@ -457,7 +441,7 @@ void siridb_server_connect(siridb_t * siridb, siridb_server_t * server)
                 uv_ip6_addr(server->address, server->port, &dest6);
                 uv_tcp_connect(
                         req,
-                        server->socket,
+                        (uv_tcp_t *) server->client->stream,
                         (const struct sockaddr *) &dest6,
                         SERVER_on_connect);
             }
@@ -470,7 +454,7 @@ void siridb_server_connect(siridb_t * siridb, siridb_server_t * server)
                     dns_req_family_map[siri.cfg->ip_support],
                     SERVER_on_resolved))
             {
-                sirinet_socket_decref(server->socket);
+                sirinet_stream_decref(server->client);
             }
         }
     }
@@ -543,7 +527,7 @@ static void SERVER_on_resolved(
                 server->name,
                 uv_err_name(status));
 
-        sirinet_socket_decref(server->socket);
+        sirinet_stream_decref(server->client);
     }
     else
     {
@@ -580,7 +564,7 @@ static void SERVER_on_resolved(
         {
             uv_tcp_connect(
                     req,
-                    server->socket,
+                    (uv_tcp_t *) server->client->stream,
                     (const struct sockaddr *) res->ai_addr,
                     SERVER_on_connect);
         }
@@ -677,8 +661,9 @@ static void SERVER_timeout_pkg(uv_timer_t * handle)
  */
 static void SERVER_on_connect(uv_connect_t * req, int status)
 {
-    sirinet_socket_t * ssocket = req->handle->data;
-    siridb_server_t * server = ssocket->origin;
+    sirinet_stream_t * client = req->handle->data;
+    siridb_t * siridb = client->siridb;
+    siridb_server_t * server = client->origin;
 
     if (status == 0)
     {
@@ -688,8 +673,8 @@ static void SERVER_on_connect(uv_connect_t * req, int status)
 
         uv_read_start(
                 req->handle,
-                sirinet_socket_alloc_buffer,
-                sirinet_socket_on_data);
+                sirinet_stream_alloc_buffer,
+                sirinet_stream_on_data);
 
         sirinet_pkg_t * pkg;
         qp_packer_t * packer = sirinet_packer_new(512);
@@ -702,19 +687,19 @@ static void SERVER_on_connect(uv_connect_t * req, int status)
         {
             if (qp_add_type(packer, QP_ARRAY_OPEN) ||
                 qp_add_raw(packer, (const unsigned char *)
-                        ssocket->siridb->server->uuid, 16) ||
-                qp_add_string_term(packer, ssocket->siridb->dbname) ||
-                qp_add_int16(packer, ssocket->siridb->server->flags) ||
+                        client->siridb->server->uuid, 16) ||
+                qp_add_string_term(packer, siridb->dbname) ||
+                qp_add_int16(packer, siridb->server->flags) ||
                 qp_add_string_term(packer, SIRIDB_VERSION) ||
                 qp_add_string_term(packer, SIRIDB_MINIMAL_VERSION) ||
                 qp_add_int8(packer, siri.cfg->ip_support) ||
                 qp_add_string_term(packer, uv_version_string()) ||
-                qp_add_string_term(packer, ssocket->siridb->dbpath) ||
-                qp_add_string_term(packer, ssocket->siridb->buffer_path) ||
-                qp_add_int64(packer, (int64_t) ssocket->siridb->buffer_size) ||
+                qp_add_string_term(packer, siridb->dbpath) ||
+                qp_add_string_term(packer, siridb->buffer->path) ||
+                qp_add_int64(packer, (int64_t) siridb->buffer->size) ||
                 qp_add_int32(packer, (int32_t) siri.startup_time) ||
-                qp_add_string_term(packer, ssocket->siridb->server->address) ||
-                qp_add_int32(packer, (int32_t) ssocket->siridb->server->port))
+                qp_add_string_term(packer, siridb->server->address) ||
+                qp_add_int32(packer, (int32_t) siridb->server->port))
             {
                 qp_packer_free(packer);
             }
@@ -726,7 +711,7 @@ static void SERVER_on_connect(uv_connect_t * req, int status)
                         server,
                         pkg,
                         0,
-                        SERVER_on_auth_response,
+                        (sirinet_promise_cb) SERVER_on_auth_response,
                         NULL,
                         0))
                 {
@@ -741,7 +726,7 @@ static void SERVER_on_connect(uv_connect_t * req, int status)
                 server->name,
                 uv_strerror(status));
 
-        sirinet_socket_decref(req->handle);
+        sirinet_stream_decref(client);
     }
     free(req);
 }
@@ -750,10 +735,9 @@ static void SERVER_on_connect(uv_connect_t * req, int status)
  * on-data call-back function.
  *In case the promise is found, promise->cb() will be called.
  */
-static void SERVER_on_data(uv_stream_t * client, sirinet_pkg_t * pkg)
+static void SERVER_on_data(sirinet_stream_t * client, sirinet_pkg_t * pkg)
 {
-    sirinet_socket_t * ssocket = client->data;
-    siridb_server_t * server = ssocket->origin;
+    siridb_server_t * server = client->origin;
     sirinet_promise_t * promise = imap_pop(server->promises, pkg->pid);
 
     log_debug(
@@ -792,7 +776,9 @@ char * siridb_server_str_status(siridb_server_t * server)
     /* we must initialize the buffer according to the longest possible value */
     char buffer[128] = {};
     int n = 0;
-    for (int i = 1; i < SERVER_FLAG_AUTHENTICATED; i *= 2)
+    int i;
+
+    for (i = 1; i < SERVER_FLAG_AUTHENTICATED; i *= 2)
     {
         if (server->flags & i)
         {
@@ -835,15 +821,15 @@ siridb_server_t * siridb_server_from_node(
 
     switch (server_node->cl_obj->tp)
     {
-    case CLERI_TP_CHOICE:  // server name
+    case CLERI_TP_CHOICE:  /* server name   */
         {
             char name[server_node->len - 1];
-            strx_extract_string(name, server_node->str, server_node->len);
+            xstr_extract_string(name, server_node->str, server_node->len);
             server = siridb_servers_by_name(siridb->servers, name);
         }
         break;
 
-    case CLERI_TP_REGEX:  // uuid
+    case CLERI_TP_REGEX:  /* uuid   */
         {
             uuid_t uuid;
             char * str_uuid = strndup(server_node->str, server_node->len);
@@ -878,17 +864,13 @@ siridb_server_t * siridb_server_from_node(
 int siridb_server_drop(siridb_t * siridb, siridb_server_t * server)
 {
     int rc = 0;
-#if DEBUG
     assert (siridb->server != server);
-#endif
     siridb_pool_t * pool = siridb->pools->pool + server->pool;
 
     switch (server->id)
     {
     case 0:
-#if DEBUG
         assert (pool->len == 2);
-#endif
         pool->server[0] = pool->server[1];
         pool->server[0]->id = 0;
         /* FALLTHRU */
@@ -931,12 +913,11 @@ int siridb_server_drop(siridb_t * siridb, siridb_server_t * server)
         siridb_server_decref(server);
         rc = siridb_servers_save(siridb);
     }
-#if DEBUG
     else
     {
+        /* can never be reached */
         assert (0);
     }
-#endif
     return rc;
 }
 
@@ -948,9 +929,6 @@ int siridb_server_drop(siridb_t * siridb, siridb_server_t * server)
  */
 void siridb__server_free(siridb_server_t * server)
 {
-#if DEBUG
-    log_debug("Free server: '%s'", server->name);
-#endif
     /* we MUST first free the promises because each promise has a reference to
      * this server and the promise callback might depend on this.
      */
@@ -1011,7 +989,7 @@ int siridb_server_cexpr_cb(
         return cexpr_str_cmp(
                 cond->operator,
                 (wserver->siridb->server == wserver->server) ?
-                        wserver->siridb->buffer_path :
+                        wserver->siridb->buffer->path :
                         (wserver->server->buffer_path != NULL) ?
                                 wserver->server->buffer_path : "",
                 cond->str);
@@ -1020,7 +998,7 @@ int siridb_server_cexpr_cb(
         return cexpr_int_cmp(
                 cond->operator,
                 (wserver->siridb->server == wserver->server) ?
-                        wserver->siridb->buffer_size :
+                        wserver->siridb->buffer->size :
                         wserver->server->buffer_size,
                 cond->int64);
 
@@ -1036,7 +1014,7 @@ int siridb_server_cexpr_cb(
     case CLERI_GID_K_IP_SUPPORT:
         return cexpr_str_cmp(
                 cond->operator,
-                sirinet_socket_ip_support_str(
+                sirinet_tcp_ip_support_str(
                         (wserver->siridb->server == wserver->server) ?
                                 siri.cfg->ip_support :
                                 wserver->server->ip_support),
@@ -1061,7 +1039,7 @@ int siridb_server_cexpr_cb(
         return cexpr_bool_cmp(
                 cond->operator,
                 (   wserver->siridb->server == wserver->server ||
-                    wserver->server->socket != NULL),
+                    wserver->server->client != NULL),
                 cond->int64);
 
     case CLERI_GID_K_POOL:
@@ -1228,9 +1206,7 @@ static int SERVER_update_name(siridb_server_t * server)
     char * tmp;
     int fmt_as_ipv6 = 0;  /* false */
 
-#if DEBUG
     assert (server->port > 0);
-#endif
 
     /* append 'string' length for server->port */
     for (; i; i /= 10, len++);
@@ -1244,9 +1220,7 @@ static int SERVER_update_name(siridb_server_t * server)
     /* append 'address' length */
     len += strlen(server->address);
 
-#if DEBUG
     assert (len > 0);
-#endif
 
     /* allocate enough space */
     tmp = (char *) realloc(server->name, len);
@@ -1296,9 +1270,9 @@ static void SERVER_on_auth_response(
     }
 
     if (    (status || pkg->tp != BPROTO_AUTH_SUCCESS) &&
-            promise->server->socket != NULL)
+            promise->server->client != NULL)
     {
-        sirinet_socket_decref(promise->server->socket);
+        sirinet_stream_decref(promise->server->client);
     }
 
     /* we must free the promise */
@@ -1318,15 +1292,14 @@ static void SERVER_on_flags_update_response(
                 promise->server->name,
                 sirinet_promise_strstatus(status));
 
-        if (promise->server->socket != NULL)
+        if (promise->server->client != NULL)
         {
-            sirinet_socket_t * ssocket =
-                    (sirinet_socket_t *) promise->server->socket->data;
+            siridb_t * siridb =  promise->server->client->siridb;
             siridb_server_t * replica = siridb_servers_by_replica(
-                    ssocket->siridb->servers,
+                    siridb->servers,
                     promise->server);
             if (replica != NULL && (
-                    replica == ssocket->siridb->server ||
+                    replica == siridb->server ||
                     siridb_server_is_accessible(replica)))
             {
                 /* we only set the status unavailable if we have an accessible

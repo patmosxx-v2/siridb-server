@@ -1,14 +1,5 @@
 /*
- * shard.c - SiriDB Shard.
-
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 04-04-2016
- *
+ * shard.c - SiriDB shard file.
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -26,11 +17,11 @@
 #include <siri/err.h>
 #include <siri/file/pointer.h>
 #include <siri/siri.h>
-#include <slist/slist.h>
+#include <vec/vec.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
-#include <strextra/strextra.h>
+#include <xstr/xstr.h>
 
 
 /* max read buffer size used for reading from index file */
@@ -440,15 +431,17 @@ int siridb_shard_cexpr_cb(
 int siridb_shard_status(char * str, siridb_shard_t * shard)
 {
     char * pt = str;
+    int i;
+    uint8_t flags;
 
     if (shard->replacing != NULL)
     {
         pt += sprintf(pt, "optimizing");
     }
 
-    uint8_t flags = shard->flags;
+    flags = shard->flags;
 
-    for (int i = 1; i < SHARD_STATUS_SIZE && flags; i++)
+    for (i = 1; i < SHARD_STATUS_SIZE && flags; i++)
     {
         if ((flags & flags_map[i].flag) == flags_map[i].flag)
         {
@@ -646,7 +639,7 @@ int siridb_shard_get_points_num32(
     if (fseeko(idx->shard->fp->fp, idx->pos, SEEK_SET) ||
         fread(
             temp,
-            12,  // NUM32 point size
+            12,  /* NUM32 point size        */
             idx->len,
             idx->shard->fp->fp) != idx->len)
     {
@@ -679,7 +672,8 @@ int siridb_shard_get_points_num32(
     /* crop from end if needed */
     if (end_ts != NULL)
     {
-        for (   uint32_t * p = temp + 3 * (idx->len - 1);
+        uint32_t * p;
+        for (   p = temp + 3 * (idx->len - 1);
                 *p >= *end_ts;
                 p -= 3, len--);
     }
@@ -688,7 +682,8 @@ int siridb_shard_get_points_num32(
             points->len &&
             (idx->shard->flags & SIRIDB_SHARD_HAS_OVERLAP))
     {
-        for (uint64_t ts; points->len < len; pt += 3)
+        uint64_t ts;
+        for (; points->len < len; pt += 3)
         {
             ts = (uint64_t) *pt;
             siridb_points_add_point(points, &ts, ((qp_via_t *) (pt + 1)));
@@ -741,7 +736,7 @@ int siridb_shard_get_points_num64(
     if (fseeko(idx->shard->fp->fp, idx->pos, SEEK_SET) ||
         fread(
             temp,
-            16,  // NUM64 point size
+            16,  /* NUM64 point size        */
             idx->len,
             idx->shard->fp->fp) != idx->len)
     {
@@ -774,7 +769,8 @@ int siridb_shard_get_points_num64(
     /* crop from end if needed */
     if (end_ts != NULL)
     {
-        for (   uint64_t * p = temp + 2 * (idx->len - 1);
+        uint64_t * p;
+        for (   p = temp + 2 * (idx->len - 1);
                 *p >= *end_ts;
                 p -= 2, len--);
     }
@@ -1037,7 +1033,8 @@ int siridb_shard_get_points_log32(
     /* crop from end if needed */
     if (end_ts != NULL)
     {
-        for (uint32_t * p = tdata + (idx->len - 1); *p >= *end_ts; --p, len--);
+        uint32_t * p;
+        for (p = tdata + (idx->len - 1); *p >= *end_ts; --p, len--);
     }
 
     if (    has_overlap &&
@@ -1048,7 +1045,7 @@ int siridb_shard_get_points_log32(
         {
             size_t slen;
             qp_via_t v;
-            v.str = strx_dup(cpt, &slen);
+            v.str = xstr_dup(cpt, &slen);
             cpt += slen + 1;
             uint64_t ts = *tpt;
             siridb_points_add_point(points, &ts, &v);
@@ -1060,7 +1057,7 @@ int siridb_shard_get_points_log32(
         {
             size_t slen;
             points->data[points->len].ts = *tpt;
-            points->data[points->len].val.str = strx_dup(cpt, &slen);
+            points->data[points->len].val.str = xstr_dup(cpt, &slen);
             cpt += slen + 1;
         }
     }
@@ -1153,7 +1150,8 @@ int siridb_shard_get_points_log64(
     /* crop from end if needed */
     if (end_ts != NULL)
     {
-        for (uint64_t * p = tdata + (idx->len - 1); *p >= *end_ts; --p, len--);
+        uint64_t * p;
+        for (p = tdata + (idx->len - 1); *p >= *end_ts; --p, len--);
     }
 
     if (    has_overlap &&
@@ -1164,7 +1162,7 @@ int siridb_shard_get_points_log64(
         {
             size_t slen;
             qp_via_t v;
-            v.str = strx_dup(cpt, &slen);
+            v.str = xstr_dup(cpt, &slen);
             cpt += slen + 1;
             siridb_points_add_point(points, tpt, &v);
         }
@@ -1175,7 +1173,7 @@ int siridb_shard_get_points_log64(
         {
             size_t slen;
             points->data[points->len].ts = *tpt;
-            points->data[points->len].val.str = strx_dup(cpt, &slen);
+            points->data[points->len].val.str = xstr_dup(cpt, &slen);
             cpt += slen + 1;
         }
     }
@@ -1197,6 +1195,7 @@ int siridb_shard_optimize(siridb_shard_t * shard, siridb_t * siridb)
     uint64_t duration = (shard->tp == SIRIDB_SHARD_TP_NUMBER) ?
             siridb->duration_num : siridb->duration_log;
     siridb_series_t * series;
+    size_t i;
 
     uv_mutex_lock(&siridb->shards_mutex);
 
@@ -1257,11 +1256,11 @@ int siridb_shard_optimize(siridb_shard_t * shard, siridb_t * siridb)
 
     uv_mutex_lock(&siridb->series_mutex);
 
-    slist_t * slist = imap_2slist_ref(siridb->series_map);
+    vec_t * vec = imap_2vec_ref(siridb->series_map);
 
     uv_mutex_unlock(&siridb->series_mutex);
 
-    if (slist == NULL)
+    if (vec == NULL)
     {
         ERR_ALLOC
         return -1;
@@ -1269,7 +1268,7 @@ int siridb_shard_optimize(siridb_shard_t * shard, siridb_t * siridb)
 
     sleep(1);
 
-    for (size_t i = 0; i < slist->len; i++)
+    for (i = 0; i < vec->len; i++)
     {
         /* its possible that another database is paused, but we wait anyway */
         if (siri.optimize->pause)
@@ -1277,7 +1276,7 @@ int siridb_shard_optimize(siridb_shard_t * shard, siridb_t * siridb)
             siri_optimize_wait();
         }
 
-        series = slist->data[i];
+        series = vec->data[i];
 
         if (    !siri_err &&
                 siri.optimize->status != SIRI_OPTIMIZE_CANCELLED &&
@@ -1308,7 +1307,7 @@ int siridb_shard_optimize(siridb_shard_t * shard, siridb_t * siridb)
         siridb_series_decref(series);
     }
 
-    slist_free(slist);
+    vec_free(vec);
 
     if (new_shard->flags & SIRIDB_SHARD_IS_REMOVED)
     {
@@ -1465,15 +1464,16 @@ void siridb_shard_drop(siridb_shard_t * shard, siridb_t * siridb)
      */
     if (optimizing)
     {
-        slist_t * slist = imap_2slist_ref(siridb->series_map);
+        vec_t * vec = imap_2vec_ref(siridb->series_map);
+        size_t i;
 
-        if (slist == NULL)
+        if (vec == NULL)
         {
             ERR_ALLOC
         }
-        else for (size_t i = 0; i < slist->len; i++)
+        else for (i = 0; i < vec->len; i++)
         {
-            series = (siridb_series_t *) slist->data[i];
+            series = (siridb_series_t *) vec->data[i];
             if (shard->id % siridb->duration_num == series->mask)
             {
                 siridb_series_remove_shard(siridb, series, shard);
@@ -1482,25 +1482,26 @@ void siridb_shard_drop(siridb_shard_t * shard, siridb_t * siridb)
             siridb_series_decref(series);
         }
 
-        slist_free(slist);
+        vec_free(vec);
     }
     else
     {
-        slist_t * slist = imap_2slist(siridb->series_map);
+        vec_t * vec = imap_2vec(siridb->series_map);
+        size_t i;
 
-        if (slist == NULL)
+        if (vec == NULL)
         {
             ERR_ALLOC
         }
-        else for (size_t i = 0; i < slist->len; i++)
+        else for (i = 0; i < vec->len; i++)
         {
-            series = (siridb_series_t *) slist->data[i];
+            series = (siridb_series_t *) vec->data[i];
             if (shard->id % siridb->duration_num == series->mask)
             {
                 siridb_series_remove_shard(siridb, series, shard);
             }
         }
-        slist_free(slist);
+        vec_free(vec);
     }
 
     if (pop_shard != NULL)
@@ -1529,10 +1530,6 @@ void siridb__shard_free(siridb_shard_t * shard)
 
     /* this will close the file, even when other references exist */
     siri_fp_decref(shard->fp);
-
-#if DEBUG
-    log_debug("Free shard id: %" PRIu64, shard->id);
-#endif
 
     free(shard->fn);
     free(shard);
@@ -1615,7 +1612,7 @@ static ssize_t SHARD_apply_idx(
         return 0;
     }
 
-    len = *((uint16_t *) (pt + (is_ts64 ? 20 : 12)));  // LEN POS IN INDEX
+    len = *((uint16_t *) (pt + (is_ts64 ? 20 : 12)));  /* LEN POS IN INDEX  */
     series = imap_get(siridb->series_map, series_id);
 
     if (shard->tp == SIRIDB_SHARD_TP_LOG)
@@ -1677,10 +1674,10 @@ static ssize_t SHARD_apply_idx(
         if (siridb_series_add_idx(
                 series,
                 shard,
-                is_ts64 ? // START_TS IN HEADER
+                is_ts64 ? /* START_TS IN HEADER  */
                         (uint64_t) *((uint64_t *) (pt + 4)) :
                         (uint64_t) *((uint32_t *) (pt + 4)),
-                is_ts64 ? // END_TS IN HEADER
+                is_ts64 ? /* END_TS IN HEADER  */
                         (uint64_t) *((uint64_t *) (pt + 12)) :
                         (uint64_t) *((uint32_t *) (pt + 8)),
                 (uint32_t) pos,
@@ -1816,7 +1813,7 @@ static int SHARD_load_idx(
             return -1;
         }
 
-        rc = fseeko(fp, sz, SEEK_CUR);  // 16 = NUM64 point size
+        rc = fseeko(fp, sz, SEEK_CUR);  /* 16 = NUM64 point size  */
         if (rc != 0)
         {
             log_error(

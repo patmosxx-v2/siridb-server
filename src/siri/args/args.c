@@ -1,3 +1,6 @@
+/*
+ * args.c - Parse SiriDB command line arguments.
+ */
 #include <siri/args/args.h>
 #include <argparse/argparse.h>
 #include <siri/version.h>
@@ -8,7 +11,7 @@
 #define DEFAULT_LOG_FILE_MAX_SIZE 50000000
 #define DEFAULT_LOG_FILE_NUM_BACKUPS 6
 
-#if DEBUG
+#ifndef NDEBUG
 #define DEFAULT_LOG_LEVEL "debug"
 #else
 #define DEFAULT_LOG_LEVEL "info"
@@ -89,16 +92,10 @@ void siri_args_parse(siri_t * siri, int argc, char *argv[])
     {
         printf(
                 "SiriDB Server %s\n"
-                "Build date: %s\n"
-                "Maintainer: %s\n"
+                "Contributers: %s\n"
                 "Home-page: %s\n",
-#ifndef DEBUG
                 SIRIDB_VERSION,
-#else
-                SIRIDB_VERSION "-DEBUG-RELEASE",
-#endif
-                SIRIDB_BUILD_DATE,
-                SIRIDB_MAINTAINER,
+                SIRIDB_CONTRIBUTERS,
                 SIRIDB_HOME_PAGE);
 
         exit(EXIT_SUCCESS);

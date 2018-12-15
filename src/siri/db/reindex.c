@@ -1,13 +1,6 @@
 /*
  * reindex.c - SiriDB Re-index.
  *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 27-07-2016
- *
  * Differences while re-indexing:
  *
  *  - Group information like number of series will be updated at a lower
@@ -39,10 +32,10 @@
 #include <stdio.h>
 #include <unistd.h>
 
-#define REINDEX_SLEEP 100           // 100 milliseconds * active tasks
-#define REINDEX_RETRY 5000          // 5 seconds
-#define REINDEX_INITWAIT 20000      // 20 seconds
-#define REINDEX_TIMEOUT 300000      // 5 minutes
+#define REINDEX_SLEEP 100           /* 100 milliseconds * active tasks  */
+#define REINDEX_RETRY 5000          /* 5 seconds                        */
+#define REINDEX_INITWAIT 20000      /* 20 seconds                       */
+#define REINDEX_TIMEOUT 300000      /* 5 minutes                        */
 
 #define NEXT_SERIES_ERR -1
 #define NEXT_SERIES_SET 0
@@ -221,9 +214,8 @@ const char * siridb_reindex_progress(siridb_t * siridb)
  */
 void siridb_reindex_close(siridb_reindex_t * reindex)
 {
-#if DEBUG
     assert (reindex != NULL && reindex->timer != NULL);
-#endif
+
     /* we can use uv_timer_stop() even if the timer is not scheduled */
     uv_timer_stop(reindex->timer);
     uv_close((uv_handle_t *) reindex->timer, (uv_close_cb) free);
@@ -239,10 +231,7 @@ void siridb_reindex_close(siridb_reindex_t * reindex)
  */
 void siridb_reindex_free(siridb_reindex_t ** reindex)
 {
-#if DEBUG
     assert ((*reindex)->timer == NULL);
-    log_debug("Free re-index");
-#endif
     if ((*reindex)->fp != NULL && fclose((*reindex)->fp))
     {
         ERR_FILE
@@ -282,10 +271,8 @@ void siridb_reindex_fopen(siridb_reindex_t * reindex, const char * opentype)
  */
 void siridb_reindex_status_update(siridb_t * siridb)
 {
-#if DEBUG
     assert (~siridb->server->flags & SERVER_FLAG_REINDEXING);
     assert (siridb->flags & SIRIDB_FLAG_REINDEXING);
-#endif
     if (siridb_servers_available(siridb))
     {
         siridb->flags &= ~SIRIDB_FLAG_REINDEXING;
@@ -313,9 +300,7 @@ void siridb_reindex_start(uv_timer_t * timer)
     }
     else
     {
-#if DEBUG
         assert (siri.optimize->pause);
-#endif
         if (!SIRI_OPTIMZE_IS_PAUSED)
         {
             log_debug("Wait for the optimize task to pause");
@@ -338,9 +323,7 @@ void siridb_reindex_start(uv_timer_t * timer)
 static void REINDEX_send(uv_timer_t * timer)
 {
     siridb_t * siridb = (siridb_t *) timer->data;
-#if DEBUG
     assert (siridb->reindex->pkg != NULL);
-#endif
     /* actually 'available' is sufficient since the destination server has
      * never status 're-indexing' unless one day we support down-scaling.
      */
@@ -350,7 +333,7 @@ static void REINDEX_send(uv_timer_t * timer)
                 siridb->reindex->server,
                 siridb->reindex->pkg,
                 REINDEX_TIMEOUT,
-                REINDEX_on_insert_response,
+                (sirinet_promise_cb) REINDEX_on_insert_response,
                 siridb,
                 FLAG_KEEP_PKG);
     }
@@ -454,11 +437,9 @@ static void REINDEX_work(uv_timer_t * timer)
     siridb_t * siridb = (siridb_t *) timer->data;
     siridb_reindex_t * reindex = siridb->reindex;
 
-#if DEBUG
     assert (SIRI_OPTIMZE_IS_PAUSED);
     assert (reindex != NULL);
     assert (siridb->reindex->pkg == NULL);
-#endif
 
     reindex->series = imap_get(siridb->series_map, *reindex->next_series_id);
 
@@ -477,11 +458,9 @@ static void REINDEX_work(uv_timer_t * timer)
          * lock is not needed since we are sure the optimize task is
          * not running
          */
-#if DEBUG
         assert (siridb_lookup_sn(
                     siridb->pools->prev_lookup,
                     reindex->series->name) == siridb->server->pool);
-#endif
         siridb_points_t * points = siridb_series_get_points(
                 reindex->series,
                 NULL,
@@ -661,9 +640,7 @@ static inline int REINDEX_fn(siridb_t * siridb, siridb_reindex_t * reindex)
  */
 static int REINDEX_unlink(siridb_reindex_t * reindex)
 {
-#if DEBUG
     assert (reindex->fp != NULL);
-#endif
     fclose(reindex->fp);
     reindex->fp = NULL;
 

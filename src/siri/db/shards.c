@@ -1,12 +1,5 @@
 /*
- * shards.c - SiriDB shards.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 04-04-2016
+ * shards.c - Collection of SiriDB shards.
  *
  * Info shards->mutex:
  *
@@ -24,6 +17,7 @@
 #include <logger/logger.h>
 #include <siri/db/shard.h>
 #include <siri/db/shards.h>
+#include <siri/db/misc.h>
 #include <siri/siri.h>
 #include <stdbool.h>
 #include <string.h>
@@ -45,16 +39,16 @@ int siridb_shards_load(siridb_t * siridb)
 {
     struct stat st;
     struct dirent ** shard_list;
-    char buffer[SIRI_PATH_MAX];
+    char buffer[XPATH_MAX];
     int n, total, rc = 0;
 
     memset(&st, 0, sizeof(struct stat));
 
     log_info("Loading shards");
 
-    SIRIDB_GET_FN(path, siridb->dbpath, SIRIDB_SHARDS_PATH);
+    siridb_misc_get_fn(path, siridb->dbpath, SIRIDB_SHARDS_PATH);
 
-    if (strlen(path) >= SIRI_PATH_MAX - SIRIDB_MAX_SHARD_FN_LEN - 1)
+    if (strlen(path) >= XPATH_MAX - SIRIDB_MAX_SHARD_FN_LEN - 1)
     {
         log_error("Shard path too long: '%s'", path);
         return -1;
@@ -85,7 +79,7 @@ int siridb_shards_load(siridb_t * siridb)
     {
         if (is_temp_fn(shard_list[n]->d_name))
         {
-            snprintf(buffer, SIRI_PATH_MAX, "%s%s",
+            snprintf(buffer, XPATH_MAX, "%s%s",
                    path, shard_list[n]->d_name);
 
             log_warning("Removing temporary file: '%s'", buffer);
@@ -247,7 +241,8 @@ static bool is_shard_fn(const char * fn, const char * ext)
  */
 static bool is_temp_fn(const char * fn)
 {
-    for (int i = 0; i < 2; i++, fn++)
+    int i;
+    for (i = 0; i < 2; i++, fn++)
     {
         if (*fn != '_')
         {

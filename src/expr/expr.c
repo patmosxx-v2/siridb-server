@@ -1,13 +1,5 @@
 /*
- * expr.c - Parse expression
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 19-04-2016
- *
+ * expr.c - For parsing expressions.
  */
 #include <stdio.h>
 #include <ctype.h>
@@ -48,9 +40,9 @@ static int64_t expr_factor(const char ** expression)
     }
     else if (**expression == '(')
     {
-        (*expression)++; // '('
+        (*expression)++; /* '('  */
         int64_t result = expr_expression(expression);
-        (*expression)++; // ')'
+        (*expression)++; /* ')'  */
         return result;
     }
     else if (**expression == '-')
@@ -58,15 +50,16 @@ static int64_t expr_factor(const char ** expression)
         (*expression)++;
         return -expr_factor(expression);
     }
-    return 0; // error
+    return 0; /* error  */
 }
 
 static int64_t expr_term(const char ** expression)
 {
     int64_t result = expr_factor(expression);
     int64_t temp;
+    int i;
 
-    for (int i = 1; i;)
+    for (i = 1; i;)
         switch (*(*expression))
         {
         case '*':

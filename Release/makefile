@@ -11,10 +11,9 @@ RM := rm -rf
 -include src/xpath/subdir.mk
 -include src/xmath/subdir.mk
 -include src/timeit/subdir.mk
--include src/test/subdir.mk
--include src/strextra/subdir.mk
--include src/slist/subdir.mk
--include src/siri/admin/subdir.mk
+-include src/xstr/subdir.mk
+-include src/vec/subdir.mk
+-include src/siri/service/subdir.mk
 -include src/siri/parser/subdir.mk
 -include src/siri/net/subdir.mk
 -include src/siri/help/subdir.mk
@@ -51,14 +50,14 @@ endif
 
 OS := $(shell uname)
 ifeq ($(OS),Darwin)
-CRYPT := 
+CRYPT :=
 UUID :=
 else
 CRYPT := -lcrypt
 UUID := -luuid
 endif
 
-# Add inputs and outputs from these tool invocations to the build variables 
+# Add inputs and outputs from these tool invocations to the build variables
 
 # All Target
 all: siridb-server
@@ -67,7 +66,7 @@ all: siridb-server
 siridb-server: $(OBJS) $(USER_OBJS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: GCC C Linker'
-	gcc  -o "siridb-server" $(OBJS) $(USER_OBJS) $(LDFLAGS) $(LIBS) $(CRYPT) $(UUID) 
+	gcc  -o "siridb-server" $(OBJS) $(USER_OBJS) $(LDFLAGS) $(LIBS) $(CRYPT) $(UUID)
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -80,3 +79,6 @@ clean:
 .SECONDARY:
 
 -include ../makefile.targets
+
+test:
+	@cd ../test && ./test.sh

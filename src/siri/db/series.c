@@ -1,12 +1,6 @@
 /*
- * series.c - Series
+ * series.c - SiriDB Time Series.
  *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 29-03-2016
  *
  * Info siridb->series_mutex:
  *
@@ -28,6 +22,7 @@
 #include <logger/logger.h>
 #include <siri/db/buffer.h>
 #include <siri/db/db.h>
+#include <siri/db/misc.h>
 #include <siri/db/series.h>
 #include <siri/db/shard.h>
 #include <siri/db/shards.h>
@@ -42,6 +37,13 @@
 #define SIRIDB_SERIES_SCHEMA 1
 #define BEND series->buffer->points->data[series->buffer->points->len - 1].ts
 #define DROPPED_DUMMY 1
+
+/*
+ * Used for storing double and integers as string. this is not very important
+ * if it will not store all characters generated so 64 is more than enough
+ */
+#define STR_TYPE_BUF_SZ 64
+static char str_type_buf[STR_TYPE_BUF_SZ];
 
 static int SERIES_save(siridb_t * siridb);
 static int SERIES_load(siridb_t * siridb, imap_t * dropped);
@@ -119,10 +121,8 @@ int siridb_series_add_point(
         uint64_t * ts,
         qp_via_t * val)
 {
-#if DEBUG
     assert (!siri_err);
     assert (series->buffer != NULL);
-#endif
     int rc = 0;
 
     series->length++;
@@ -132,7 +132,7 @@ int siridb_series_add_point(
      */
     siridb_points_add_point(series->buffer, ts, val);
 
-    if (series->buffer->len == siridb->buffer_len)
+    if (series->buffer->len == siridb->buffer->len)
     {
         if (siridb_shards_add_points(
                 siridb,
@@ -144,7 +144,7 @@ int siridb_series_add_point(
         else
         {
             series->buffer->len = 0;
-            if (siridb_buffer_write_len(siridb, series))
+            if (siridb_buffer_write_empty(siridb->buffer, series))
             {
                 ERR_FILE
                 rc = -1;
@@ -153,7 +153,7 @@ int siridb_series_add_point(
     }
     else
     {
-        if (siridb_buffer_write_point(siridb, series, ts, val))
+        if (siridb_buffer_write_point(siridb->buffer, series, ts, val))
         {
             ERR_FILE
             log_critical("Cannot write new point to buffer");
@@ -180,7 +180,7 @@ int siridb_series_add_pcache(
         siridb_series_t *__restrict series,
         siridb_pcache_t *__restrict pcache)
 {
-    if (pcache->len > siridb->buffer_len || series->buffer == NULL)
+    if (pcache->len > siridb->buffer->len || series->buffer == NULL)
     {
         series->length += pcache->len;
 
@@ -190,7 +190,7 @@ int siridb_series_add_pcache(
                 (siridb_points_t *) pcache);
     }
 
-    if (pcache->len + series->buffer->len > siridb->buffer_len)
+    if (pcache->len + series->buffer->len > siridb->buffer->len)
     {
         series->length += pcache->len;
 
@@ -216,7 +216,7 @@ int siridb_series_add_pcache(
         }
 
         series->buffer->len = 0;
-        if (siridb_buffer_write_len(siridb, series))
+        if (siridb_buffer_write_empty(siridb->buffer, series))
         {
             ERR_FILE
             return -1;
@@ -225,8 +225,9 @@ int siridb_series_add_pcache(
     else
     {
         siridb_point_t *__restrict point;
+        size_t i;
 
-        for (size_t i = 0; i < pcache->len; i++)
+        for (i = 0; i < pcache->len; i++)
         {
             point = pcache->data + i;
 
@@ -285,7 +286,7 @@ siridb_series_t * siridb_series_new(
     }
 
     /* create a buffer for series (except string series) */
-    if (tp != TP_STRING && siridb_buffer_new_series(siridb, series))
+    if (tp != TP_STRING && siridb_buffer_new_series(siridb->buffer, series))
     {
         /* signal is raised */
         log_critical("Could not create buffer for series '%s'.",
@@ -328,17 +329,11 @@ siridb_series_t * siridb_series_new(
  */
 void siridb__series_free(siridb_series_t *__restrict series)
 {
-#if DEBUG
-    if (siri.status == SIRI_STATUS_RUNNING || 0)
-    {
-        log_debug("Free series: '%s'", series->name);
-    }
-#endif
-
     siridb_shard_t * shard;
+    uint_fast32_t i;
 
     /* mark shards with dropped series flag */
-    for (uint_fast32_t i = 0; i < series->idx_len; i++)
+    for (i = 0; i < series->idx_len; i++)
     {
         shard = series->idx[i].shard;
         shard->flags |= SIRIDB_SHARD_HAS_DROPPED_SERIES;
@@ -350,8 +345,8 @@ void siridb__series_free(siridb_series_t *__restrict series)
         siridb_points_free(series->buffer);
         if (series->flags & SIRIDB_SERIES_IS_DROPPED)
         {
-            slist_append_safe(
-                &series->siridb->empty_buffers,
+            vec_append_safe(
+                &series->siridb->buffer->empty,
                 (void *) series->bf_offset);
         }
     }
@@ -367,13 +362,13 @@ void siridb__series_free(siridb_series_t *__restrict series)
  */
 int siridb_series_load(siridb_t * siridb)
 {
-#if DEBUG
+    imap_t * dropped;
+
     /* we must have a server because we need to know the pool id */
     assert (siridb->server != NULL);
-#endif
     log_info("Loading series");
 
-    imap_t * dropped = imap_new();
+    dropped = imap_new();
 
     if (dropped == NULL)
     {
@@ -497,9 +492,7 @@ void siridb_series_drop_prepare(siridb_t * siridb, siridb_series_t * series)
  */
 int siridb_series_drop_commit(siridb_t * siridb, siridb_series_t * series)
 {
-#if DEBUG
     assert (series->flags & SIRIDB_SERIES_IS_DROPPED);
-#endif
 
     int rc = 0;
 
@@ -564,7 +557,7 @@ int siridb_series_flush_dropped(siridb_t * siridb)
     }
     else if (fflush(siridb->dropped_fp))
     {
-        SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_DROPPED_FN)
+        siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_DROPPED_FN)
         log_critical("Could not flush dropped file: '%s'", fn);
         rc = -1;
     }
@@ -756,27 +749,10 @@ siridb_points_t * siridb_series_get_points(
         }
     }
 
-    if (points->len < size)
+    if (points->len < size && siridb_points_resize(points, points->len))
     {
-        /* shrink allocation size */
-        point = (siridb_point_t *)
-                realloc(points->data, points->len * sizeof(siridb_point_t));
-        if (point == NULL && points->len)
-        {
-            log_error("Re-allocation points has failed");
-        }
-        else
-        {
-            points->data = point;
-        }
+        log_error("Re-allocation points has failed");
     }
-#if DEBUG
-    else
-    {
-        /* size must be equal if not smaller */
-        assert (points->len == size);
-    }
-#endif
 
     return points;
 }
@@ -818,10 +794,8 @@ siridb_points_t * siridb_series_get_first(
 
     (*required_shard)++;
 
-#if DEBUG
     /* if not in the buffer, then if must be in a shard */
     assert (series->idx_len);
-#endif
 
     idx_t * first = series->idx;
 
@@ -840,11 +814,9 @@ siridb_points_t * siridb_series_get_first(
             &start,
             series->flags & SIRIDB_SERIES_HAS_OVERLAP);
 
-#if DEBUG
     /* we must have at least one point, more points are possible when
      * having multiple points at the same time-stamp. */
     assert (points->len);
-#endif
 
     while (points->len > 1)
     {
@@ -884,11 +856,8 @@ siridb_points_t * siridb_series_get_last(
 
     (*required_shard)++;
 
-
-#if DEBUG
     /* if not in the buffer, then if must be in a shard */
     assert (series->idx_len);
-#endif
 
     /* if not in the buffer, then if must be in a shard */
 
@@ -917,11 +886,9 @@ siridb_points_t * siridb_series_get_last(
             NULL,
             series->flags & SIRIDB_SERIES_HAS_OVERLAP);
 
-#if DEBUG
     /* we must have at least one point, more points are possible when
      * having multiple points at the same time-stamp. */
     assert (points->len);
-#endif
 
     while (points->len > 1)
     {
@@ -945,6 +912,86 @@ siridb_points_t * siridb_series_get_count(siridb_series_t * series)
         points->len = 1;
     }
     return points;
+}
+
+void siridb_series_ensure_type(siridb_series_t * series, qp_obj_t * qp_obj)
+{
+    switch(series->tp)
+    {
+    case TP_INT:
+        if (qp_obj->tp != QP_INT64)
+        {
+            if (qp_obj->tp == QP_DOUBLE)
+            {
+                double d = qp_obj->via.real;
+                qp_obj->via.int64 = (int64_t) d;
+            }
+            else if (qp_obj->tp == QP_RAW)
+            {
+                char * s = strndup(qp_obj->via.str, qp_obj->len);
+                qp_obj->via.int64 = \
+                        (s == NULL) ? 0 : (int64_t) strtoll(s, NULL, 10);
+                free(s);
+            }
+            else
+            {
+                assert(0);
+            }
+            qp_obj->tp = QP_INT64;
+        }
+        return;
+    case TP_DOUBLE:
+        if (qp_obj->tp != QP_DOUBLE)
+        {
+            if (qp_obj->tp == QP_INT64)
+            {
+                int64_t i = qp_obj->via.int64;
+                qp_obj->via.real = (double) i;
+            }
+            else if (qp_obj->tp == QP_RAW)
+            {
+                char * s = strndup(qp_obj->via.str, qp_obj->len);
+                qp_obj->via.real = \
+                        (s == NULL) ? 0.0 : strtod(s, NULL);
+                free(s);
+            }
+            else
+            {
+                assert(0);
+            }
+            qp_obj->tp = QP_DOUBLE;
+        }
+        return;
+    case TP_STRING:
+        if (qp_obj->tp != QP_RAW)
+        {
+            if (qp_obj->tp == QP_INT64)
+            {
+                qp_obj->len = snprintf(
+                        str_type_buf,
+                        STR_TYPE_BUF_SZ,
+                        "%" PRId64,
+                        qp_obj->via.int64);
+                qp_obj->via.str = str_type_buf;
+            }
+            else if (qp_obj->tp == QP_DOUBLE)
+            {
+                qp_obj->len = snprintf(
+                        str_type_buf,
+                        STR_TYPE_BUF_SZ,
+                        "%f",
+                        qp_obj->via.real);
+                qp_obj->via.str = str_type_buf;
+            }
+            else
+            {
+                assert(0);
+            }
+            qp_obj->tp = QP_RAW;
+        }
+        return;
+    }
+    assert (0);
 }
 
 /*
@@ -1004,13 +1051,11 @@ int siridb_series_optimize_shard(
             size += idx->len;
             end++;
 
-#if DEBUG
             /*
              * we have at least 2 references to the shard so we never
              * reach 0 here.  (this ref + optimize ref)
              */
             assert(shard->replacing->ref >= 2);
-#endif
             siridb_shard_decref(shard->replacing);
         }
         else if (idx->shard == shard && end)
@@ -1095,9 +1140,7 @@ int siridb_series_optimize_shard(
             }
             while (idx->shard == shard);
 
-#if DEBUG
             assert (idx->shard == shard->replacing);
-#endif
 
             idx->shard = shard;
             idx->start_ts = points->data[pstart].ts;
@@ -1160,13 +1203,11 @@ int siridb_series_optimize_shard(
             series->idx = idx;
         }
     }
-#if DEBUG
     else
     {
         /* start must be equal to end if not smaller */
         assert (i == end);
     }
-#endif
 
     if (series->flags & SIRIDB_SERIES_HAS_OVERLAP)
     {
@@ -1184,7 +1225,7 @@ int siridb_series_optimize_shard(
 int siridb_series_open_store(siridb_t * siridb)
 {
     /* macro get series file name */
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_SERIES_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_SERIES_FN)
 
     if ((siridb->store = qp_open(fn, "a")) == NULL)
     {
@@ -1249,10 +1290,11 @@ static void SERIES_idx_sort(
  */
 static void SERIES_update_overlap(siridb_series_t *__restrict series)
 {
-#if DEBUG
+    uint_fast32_t i;
+
     assert (series->flags & SIRIDB_SERIES_HAS_OVERLAP);
-#endif
-    for (uint_fast32_t i = 1; i < series->idx_len; i++)
+
+    for (i = 1; i < series->idx_len; i++)
     {
         if (series->idx[i - 1].end_ts > series->idx[i].start_ts)
         {
@@ -1315,16 +1357,14 @@ static siridb_series_t * SERIES_new(
                     (uint16_t) ((n / 11) % siridb->shard_mask_log) + 600 :
                     (uint16_t) ((n / 11) % siridb->shard_mask_num);
 
-            if ((uint8_t) ((n / 11) % 2))
+            if ((_Bool) ((n / 11) % 2))
             {
                 series->flags |= SIRIDB_SERIES_IS_SERVER_ONE;
             }
 
-#if DEBUG
             /* make sure these two are exactly the same */
             assert (siridb_series_server_id(series) ==
                     siridb_series_server_id_by_name(series->name));
-#endif
 
             if (siridb->time->precision == SIRIDB_TIME_SECONDS)
             {
@@ -1363,7 +1403,7 @@ static int SERIES_save(siridb_t * siridb)
     log_debug("Cleanup series file");
 
     /* macro get series file name */
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_SERIES_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_SERIES_FN)
 
     if ((fpacker = qp_open(fn, "w")) == NULL)
     {
@@ -1411,7 +1451,7 @@ static int SERIES_read_dropped(siridb_t * siridb, imap_t * dropped)
 
     log_debug("Loading dropped series");
 
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_DROPPED_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_DROPPED_FN)
 
     if ((fp = fopen(fn, "r")) == NULL)
     {
@@ -1476,16 +1516,17 @@ static int SERIES_load(siridb_t * siridb, imap_t * dropped)
     siridb_series_t * series;
     qp_types_t tp;
     uint32_t series_id;
+    uint8_t series_tp;
 
     /* we should not have any series at this moment */
     assert(siridb->max_series_id == 0);
 
     /* get series file name */
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_SERIES_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_SERIES_FN)
 
     if (!xpath_file_exist(fn))
     {
-        // missing series file, create an empty file and return
+        /* missing series file, create an empty file and return  */
         return SERIES_save(siridb);
     }
 
@@ -1495,7 +1536,7 @@ static int SERIES_load(siridb_t * siridb, imap_t * dropped)
     }
 
     /* unpacker will be freed in case schema check fails */
-    siridb_schema_check(SIRIDB_SERIES_SCHEMA)
+    siridb_misc_schema_check(SIRIDB_SERIES_SCHEMA)
 
     while (qp_next(unpacker, NULL) == QP_ARRAY3 &&
             qp_next(unpacker, &qp_series_name) == QP_RAW &&
@@ -1512,10 +1553,11 @@ static int SERIES_load(siridb_t * siridb, imap_t * dropped)
 
         if (imap_get(dropped, series_id) == NULL)
         {
+            series_tp = (uint8_t) qp_series_tp.via.int64;
             series = SERIES_new(
                     siridb,
                     series_id,
-                    (uint8_t) qp_series_tp.via.int64,
+                    series_tp,
                     siridb->server->pool,
                     (const char *) qp_series_name.via.raw);
             if (series != NULL)
@@ -1562,7 +1604,7 @@ static int SERIES_load(siridb_t * siridb, imap_t * dropped)
  */
 static int SERIES_open_new_dropped_file(siridb_t * siridb)
 {
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_DROPPED_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_DROPPED_FN)
 
     if ((siridb->dropped_fp = fopen(fn, "w")) == NULL)
     {
@@ -1579,7 +1621,7 @@ static int SERIES_open_new_dropped_file(siridb_t * siridb)
  */
 static int SERIES_open_dropped_file(siridb_t * siridb)
 {
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_DROPPED_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_DROPPED_FN)
 
     if ((siridb->dropped_fp = fopen(fn, "a")) == NULL)
     {
@@ -1610,7 +1652,7 @@ static int SERIES_update_max_id(siridb_t * siridb)
     FILE * fp;
     uint32_t max_series_id = 0;
 
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_MAX_SERIES_ID_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_MAX_SERIES_ID_FN)
 
     if ((fp = fopen(fn, "r")) != NULL)
     {
@@ -1687,7 +1729,9 @@ static void SERIES_update_end(siridb_series_t *__restrict series)
     {
         uint64_t start = 0;
         idx_t * idx;
-        for (uint_fast32_t i = series->idx_len; i--;)
+        uint_fast32_t i;
+
+        for (i = series->idx_len; i--;)
         {
             idx = series->idx + i;
 

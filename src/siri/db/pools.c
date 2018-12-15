@@ -1,14 +1,6 @@
 /*
- * pools.c - Generate pools lookup.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 04-05-2016
+ * pools.c - Collection of pools.
  */
-
 #include <assert.h>
 #include <llist/llist.h>
 #include <logger/logger.h>
@@ -28,13 +20,11 @@ static void POOLS_arrange(siridb_server_t * server, siridb_t * siridb);
  */
 void siridb_pools_init(siridb_t * siridb)
 {
-#if DEBUG
     assert (siridb->pools == NULL);
     assert (siridb->servers != NULL && siridb->servers->len > 0);
     assert (siridb->server != NULL);
-#endif
 
-    siridb->pools = (siridb_pools_t *) malloc(sizeof(siridb_pools_t));
+    siridb->pools = malloc(sizeof(siridb_pools_t));
     if (siridb->pools == NULL)
     {
         ERR_ALLOC
@@ -50,8 +40,7 @@ void siridb_pools_init(siridb_t * siridb)
     siridb->pools->len = max_pool + 1;
 
     /* allocate memory for all pools */
-    siridb->pools->pool = (siridb_pool_t *)
-            malloc(sizeof(siridb_pool_t) * siridb->pools->len);
+    siridb->pools->pool = malloc(sizeof(siridb_pool_t) * siridb->pools->len);
 
     if (siridb->pools->pool == NULL)
     {
@@ -124,9 +113,9 @@ siridb_pool_t * siridb_pools_append(
             pool->len = 0;
             siridb_pool_add_server(pool, server);
             pools->len++;
-#if DEBUG
+
             assert (pools->prev_lookup == NULL);
-#endif
+
             pools->prev_lookup = pools->lookup;
             pools->lookup = lookup;
         }
@@ -143,15 +132,16 @@ siridb_pool_t * siridb_pools_append(
  */
 int siridb_pools_online(siridb_t * siridb)
 {
-    for (uint16_t pid = 0; pid < siridb->pools->len; pid++)
+    uint16_t pid ;
+    for (pid = 0; pid < siridb->pools->len; pid++)
     {
         if (    pid != siridb->server->pool &&
                 !siridb_pool_online(siridb->pools->pool + pid))
         {
-            return 0;  // false
+            return 0;  /* false  */
         }
     }
-    return 1;  //true
+    return 1;  /* true  */
 }
 
 /*
@@ -162,15 +152,16 @@ int siridb_pools_online(siridb_t * siridb)
  */
 int siridb_pools_available(siridb_t * siridb)
 {
-    for (uint16_t pid = 0; pid < siridb->pools->len; pid++)
+    uint16_t pid;
+    for (pid = 0; pid < siridb->pools->len; pid++)
     {
         if (    pid != siridb->server->pool &&
                 !siridb_pool_available(siridb->pools->pool + pid))
         {
-            return 0;  // false
+            return 0;  /* false  */
         }
     }
-    return 1;  //true
+    return 1;  /* true  */
 }
 
 
@@ -182,15 +173,16 @@ int siridb_pools_available(siridb_t * siridb)
  */
 int siridb_pools_accessible(siridb_t * siridb)
 {
-    for (uint16_t pid = 0; pid < siridb->pools->len; pid++)
+    uint16_t pid;
+    for (pid = 0; pid < siridb->pools->len; pid++)
     {
         if (    pid != siridb->server->pool &&
                 !siridb_pool_accessible(siridb->pools->pool + pid))
         {
-            return 0;  // false
+            return 0;  /* false  */
         }
     }
-    return 1;  //true
+    return 1;  /* true  */
 }
 
 /*
@@ -224,8 +216,9 @@ void siridb_pools_send_pkg(
     else
     {
         siridb_pool_t * pool;
+        uint16_t pid;
 
-        for (uint16_t pid = 0; pid < siridb->pools->len; pid++)
+        for (pid = 0; pid < siridb->pools->len; pid++)
         {
             if (pid == siridb->server->pool)
             {
@@ -238,7 +231,7 @@ void siridb_pools_send_pkg(
                     pool,
                     pkg,
                     timeout,
-                    sirinet_promises_on_response,
+                    (sirinet_promise_cb) sirinet_promises_on_response,
                     promises,
                     FLAG_KEEP_PKG | flags))
             {
@@ -246,7 +239,7 @@ void siridb_pools_send_pkg(
                         "Cannot send package to pool '%u' "
                         "(no accessible server found)",
                         pid);
-                slist_append(promises->promises, NULL);
+                vec_append(promises->promises, NULL);
             }
         }
 
@@ -256,10 +249,10 @@ void siridb_pools_send_pkg(
 
 /*
  * This function will send a package to one accessible server in the pools
- * provided by the 'slist'. The promises call-back function should be
+ * provided by the 'vec'. The promises call-back function should be
  * used to check if the package has been send successfully to all pools.
  *
- * The 'slist' can be destroyed after this function has returned.
+ * The 'vec' can be destroyed after this function has returned.
  *
  * This function can raise a SIGNAL when allocation errors occur.
  *
@@ -269,7 +262,7 @@ void siridb_pools_send_pkg(
  * will always be destroyed.
  */
 void siridb_pools_send_pkg_2some(
-        slist_t * slist,
+        vec_t * vec,
         sirinet_pkg_t * pkg,
         uint64_t timeout,
         sirinet_promises_cb cb,
@@ -277,7 +270,7 @@ void siridb_pools_send_pkg_2some(
         int flags)
 {
     sirinet_promises_t * promises =
-            sirinet_promises_new(slist->len, cb, data, pkg);
+            sirinet_promises_new(vec->len, cb, data, pkg);
 
     if (promises == NULL)
     {
@@ -287,23 +280,24 @@ void siridb_pools_send_pkg_2some(
     else
     {
         siridb_pool_t * pool;
+        size_t i;
 
-        for (size_t i = 0; i < slist->len; i++)
+        for (i = 0; i < vec->len; i++)
         {
-            pool = slist->data[i];
+            pool = vec->data[i];
 
             if (siridb_pool_send_pkg(
                     pool,
                     pkg,
                     timeout,
-                    sirinet_promises_on_response,
+                    (sirinet_promise_cb) sirinet_promises_on_response,
                     promises,
                     FLAG_KEEP_PKG | flags))
             {
                 log_debug(
                         "Cannot send package to at least on pool "
                         "(no accessible server found)");
-                slist_append(promises->promises, NULL);
+                vec_append(promises->promises, NULL);
             }
         }
 

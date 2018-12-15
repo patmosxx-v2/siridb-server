@@ -1,13 +1,5 @@
 /*
- * servers.c - SiriDB Servers.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 10-06-2016
- *
+ * servers.c - Collection of SiriDB servers.
  */
 #include <assert.h>
 #include <llist/llist.h>
@@ -18,9 +10,11 @@
 #include <siri/db/query.h>
 #include <siri/db/server.h>
 #include <siri/db/servers.h>
+#include <siri/db/misc.h>
 #include <siri/err.h>
 #include <siri/net/promises.h>
-#include <siri/parser/queries.h>
+#include <siri/net/tcp.h>
+#include <siri/db/queries.h>
 #include <siri/siri.h>
 #include <siri/version.h>
 #include <xpath/xpath.h>
@@ -59,7 +53,7 @@ int siridb_servers_load(siridb_t * siridb)
     }
 
     /* get servers file name */
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_SERVERS_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_SERVERS_FN)
 
     if (!xpath_file_exist(fn))
     {
@@ -101,7 +95,7 @@ int siridb_servers_load(siridb_t * siridb)
     }
 
     /* unpacker will be freed in case macro fails */
-    siridb_schema_check(SIRIDB_SERVERS_SCHEMA)
+    siridb_misc_schema_check(SIRIDB_SERVERS_SCHEMA)
 
 
     int rc = 0;
@@ -200,7 +194,7 @@ void siridb_servers_free(llist_t * servers)
 ssize_t siridb_servers_get_file(char ** buffer, siridb_t * siridb)
 {
     /* get servers file name */
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_SERVERS_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_SERVERS_FN)
 
     return xpath_get_content(buffer, fn);
 }
@@ -234,11 +228,9 @@ int siridb_servers_register(siridb_t * siridb, siridb_server_t * server)
         if (siridb->server->pool == server->pool)
         {
             /* this is a replica for 'this' pool */
-#if DEBUG
             assert (siridb->replicate == NULL);
             assert (siridb->fifo == NULL);
             assert (siridb->replica == NULL);
-#endif
             siridb->replica = server;
             siridb->fifo = siridb_fifo_new(siridb);
 
@@ -330,23 +322,25 @@ int siridb_servers_register(siridb_t * siridb, siridb_server_t * server)
  *
  * In case of an error, NULL is returned.
  */
-slist_t * siridb_servers_other2slist(siridb_t * siridb)
+vec_t * siridb_servers_other2vec(siridb_t * siridb)
 {
     siridb_server_t * server;
-    slist_t * servers = slist_new(siridb->servers->len - 1);
+    vec_t * servers = vec_new(siridb->servers->len - 1);
+    llist_node_t * node;
+
     if (servers == NULL)
     {
         return NULL;
     }
 
-    for (   llist_node_t * node = siridb->servers->first;
+    for (   node = siridb->servers->first;
             node != NULL;
             node = node->next)
     {
         server = node->data;
         if (server != siridb->server)
         {
-            slist_append(servers, server);
+            vec_append(servers, server);
         }
     }
 
@@ -362,7 +356,7 @@ slist_t * siridb_servers_other2slist(siridb_t * siridb)
  * using the arguments (NULL, data).
  */
 void siridb_servers_send_pkg(
-        slist_t * servers,
+        vec_t * servers,
         sirinet_pkg_t * pkg,
         uint64_t timeout,
         sirinet_promises_cb cb,
@@ -378,8 +372,9 @@ void siridb_servers_send_pkg(
     else
     {
         siridb_server_t * server;
+        size_t i;
 
-        for (size_t i = 0; i < servers->len; i++)
+        for (i = 0; i < servers->len; i++)
         {
             server = (siridb_server_t *) servers->data[i];
 
@@ -389,21 +384,21 @@ void siridb_servers_send_pkg(
                         server,
                         pkg,
                         timeout,
-                        sirinet_promises_on_response,
+                        (sirinet_promise_cb) sirinet_promises_on_response,
                         promises,
                         FLAG_KEEP_PKG))
                 {
                     log_critical(
                             "Allocation error while trying to send a package "
                             "to '%s'", server->name);
-                    slist_append(promises->promises, NULL);
+                    vec_append(promises->promises, NULL);
                 }
             }
             else
             {
                 log_debug("Cannot send package to '%s' (server is offline)",
                         server->name);
-                slist_append(promises->promises, NULL);
+                vec_append(promises->promises, NULL);
             }
 
         }
@@ -536,10 +531,11 @@ int siridb_servers_available(siridb_t * siridb)
 
 int siridb_servers_list(siridb_server_t * server, uv_async_t * handle)
 {
-    siridb_query_t * query = (siridb_query_t *) handle->data;
-    slist_t * props = ((query_list_t *) query->data)->props;
-    siridb_t * siridb = ((sirinet_socket_t *) query->client->data)->siridb;
-    cexpr_t * where_expr = ((query_list_t *) query->data)->where_expr;
+    siridb_query_t * query = handle->data;
+    query_list_t * qlist = query->data;
+    vec_t * props = qlist->props;
+    siridb_t * siridb = query->client->siridb;
+    cexpr_t * where_expr = qlist->where_expr;
     size_t i;
 
     siridb_server_walker_t wserver = {
@@ -552,7 +548,7 @@ int siridb_servers_list(siridb_server_t * server, uv_async_t * handle)
             (cexpr_cb_t) siridb_server_cexpr_cb,
             &wserver))
     {
-        return 0;  // false
+        return 0;  /* false */
     }
 
     qp_add_type(query->packer, QP_ARRAY_OPEN);
@@ -568,7 +564,7 @@ int siridb_servers_list(siridb_server_t * server, uv_async_t * handle)
             qp_add_string(
                     query->packer,
                     (siridb->server == server) ?
-                            siridb->buffer_path :
+                            siridb->buffer->path :
                             (server->buffer_path != NULL) ?
                                     server->buffer_path : "");
             break;
@@ -576,7 +572,7 @@ int siridb_servers_list(siridb_server_t * server, uv_async_t * handle)
             qp_add_int64(
                     query->packer,
                     (siridb->server == server) ?
-                            siridb->buffer_size : server->buffer_size);
+                            siridb->buffer->size : server->buffer_size);
             break;
         case CLERI_GID_K_DBPATH:
             qp_add_string(
@@ -589,7 +585,7 @@ int siridb_servers_list(siridb_server_t * server, uv_async_t * handle)
         case CLERI_GID_K_IP_SUPPORT:
             qp_add_string(
                     query->packer,
-                    sirinet_socket_ip_support_str((siridb->server == server) ?
+                    sirinet_tcp_ip_support_str((siridb->server == server) ?
                             siri.cfg->ip_support : server->ip_support));
             break;
         case CLERI_GID_K_LIBUV:
@@ -606,7 +602,7 @@ int siridb_servers_list(siridb_server_t * server, uv_async_t * handle)
         case CLERI_GID_K_ONLINE:
             qp_add_type(
                     query->packer,
-                    (siridb->server == server || server->socket != NULL) ?
+                    (siridb->server == server || server->client != NULL) ?
                             QP_TRUE : QP_FALSE);
             break;
         case CLERI_GID_K_POOL:
@@ -711,7 +707,7 @@ int siridb_servers_list(siridb_server_t * server, uv_async_t * handle)
 
     qp_add_type(query->packer, QP_ARRAY_CLOSE);
 
-    return 1;  // true
+    return 1;  /* true  */
 }
 
 /*
@@ -725,7 +721,9 @@ int siridb_servers_check_version(siridb_t * siridb, char * version)
 {
     siridb_server_t * server;
     int n = 0;
-    for (   llist_node_t * node = siridb->servers->first;
+    llist_node_t * node;
+
+    for (   node = siridb->servers->first;
             node != NULL;
             node = node->next)
     {
@@ -747,7 +745,7 @@ int siridb_servers_save(siridb_t * siridb)
     qp_fpacker_t * fpacker;
 
     /* get servers file name */
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_SERVERS_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_SERVERS_FN)
 
     if ((fpacker = qp_open(fn, "w")) == NULL)
     {

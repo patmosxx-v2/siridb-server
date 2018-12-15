@@ -1,13 +1,5 @@
 /*
- * initsync.c - Initial replica synchronization
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 22-07-2016
- *
+ * initsync.c - Initial replica synchronization.
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -25,9 +17,9 @@
 #include <siri/optimize.h>
 #include <qpack/qpack.h>
 
-#define INITSYNC_SLEEP 100          // 100 milliseconds * active tasks
-#define INITSYNC_TIMEOUT 120000     // 2 minutes
-#define INITSYNC_RETRY 30000        // 30 seconds
+#define INITSYNC_SLEEP 100          /* 100 milliseconds * active tasks  */
+#define INITSYNC_TIMEOUT 120000     /* 2 minutes                        */
+#define INITSYNC_RETRY 30000        /* 30 seconds                       */
 #define INITSYC_FN ".initsync"
 
 void siridb_initsync_fopen(siridb_initsync_t * initsync, const char * opentype);
@@ -240,11 +232,9 @@ void siridb_initsync_fopen(siridb_initsync_t * initsync, const char * opentype)
  */
 static void INITSYNC_next_series_id(siridb_t * siridb)
 {
-#if DEBUG
     assert (siridb->replicate != NULL);
     assert (siridb->replicate->status == REPLICATE_RUNNING ||
             siridb->replicate->status == REPLICATE_STOPPING);
-#endif
 
     siridb_initsync_t * initsync = siridb->replicate->initsync;
 
@@ -297,9 +287,7 @@ static void INITSYNC_next_series_id(siridb_t * siridb)
  */
 static void INITSYNC_pause(siridb_replicate_t * replicate)
 {
-#if DEBUG
     assert (replicate->status == REPLICATE_STOPPING);
-#endif
     if (fclose(replicate->initsync->fp))
     {
         log_critical("Error occurred while closing file: '%s'",
@@ -317,9 +305,7 @@ static void INITSYNC_pause(siridb_replicate_t * replicate)
 static void INITSYNC_send(uv_timer_t * timer)
 {
     siridb_t * siridb = (siridb_t *) timer->data;
-#if DEBUG
     assert (siridb->replicate->initsync->pkg != NULL);
-#endif
 
     if (siridb->replicate->status == REPLICATE_STOPPING)
     {
@@ -333,7 +319,7 @@ static void INITSYNC_send(uv_timer_t * timer)
                     siridb->replica,
                     siridb->replicate->initsync->pkg,
                     INITSYNC_TIMEOUT,
-                    INITSYNC_on_insert_response,
+                    (sirinet_promise_cb) INITSYNC_on_insert_response,
                     siridb,
                     FLAG_KEEP_PKG);
         }
@@ -355,13 +341,12 @@ static void INITSYNC_send(uv_timer_t * timer)
 static void INITSYNC_work(uv_timer_t * timer)
 {
     siridb_t * siridb = (siridb_t *) timer->data;
-#if DEBUG
+
     assert (siridb->replicate->status == REPLICATE_RUNNING ||
             siridb->replicate->status == REPLICATE_STOPPING);
     assert (siridb->replicate->initsync != NULL);
     assert (siridb->replicate->initsync->fp != NULL);
     assert (siridb->replicate->initsync->pkg == NULL);
-#endif
 
     if (siridb->insert_tasks)
     {
@@ -519,9 +504,7 @@ static inline int INITSYNC_fn(siridb_t * siridb, siridb_initsync_t * initsync)
  */
 static int INITSYNC_unlink(siridb_initsync_t * initsync)
 {
-#if DEBUG
     assert (initsync->fp != NULL);
-#endif
     fclose(initsync->fp);
     initsync->fp = NULL;
 

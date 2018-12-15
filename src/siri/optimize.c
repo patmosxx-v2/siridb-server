@@ -1,20 +1,12 @@
 /*
  * optimize.c - Optimize task SiriDB.
  *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
  * There is one and only one optimize task thread running for SiriDB. For this
  * reason we do not need to parse data but we should only take care for locks
  * while writing data.
  *
- *
  * Thread debugging:
  *  log_debug("getpid: %d - pthread_self: %lu",getpid(), pthread_self());
- *
- * changes
- *  - initial version, 09-05-2016
  *
  */
 #include <assert.h>
@@ -22,7 +14,7 @@
 #include <siri/db/shard.h>
 #include <siri/optimize.h>
 #include <siri/siri.h>
-#include <slist/slist.h>
+#include <vec/vec.h>
 #include <unistd.h>
 
 static siri_optimize_t optimize = {
@@ -33,7 +25,7 @@ static siri_optimize_t optimize = {
 };
 
 static void OPTIMIZE_work(uv_work_t * work);
-static void OPTIMIZE_cleanup(slist_t * slsiridb);
+static void OPTIMIZE_cleanup(vec_t * slsiridb);
 static void OPTIMIZE_work_finish(uv_work_t * work, int status);
 static void OPTIMIZE_cb(uv_timer_t * handle);
 
@@ -98,9 +90,7 @@ void siri_optimize_pause(void)
  */
 void siri_optimize_continue(void)
 {
-#if DEBUG
     assert (optimize.pause);
-#endif
     if (!--optimize.pause && optimize.status == SIRI_OPTIMIZE_PAUSED_MAIN)
     {
         log_debug("Optimize task was paused by the main thread, continue...");
@@ -118,9 +108,7 @@ int siri_optimize_wait(void)
     /* its possible that another database is paused, but we wait anyway */
     if (optimize.pause)
     {
-#if DEBUG
         assert (optimize.status == SIRI_OPTIMIZE_RUNNING);
-#endif
         optimize.status = SIRI_OPTIMIZE_PAUSED;
 
         /* close open index file in case this is required */
@@ -185,9 +173,8 @@ int siri_optimize_wait(void)
  */
 int siri_optimize_create_idx(const char * fn)
 {
-#if DEBUG
     assert (optimize.idx_fn == NULL && strlen(fn) > 3);
-#endif
+
     /* copy file name */
     optimize.idx_fn = strdup(fn);
     if (optimize.idx_fn == NULL)
@@ -269,11 +256,12 @@ static void OPTIMIZE_work(uv_work_t * work  __attribute__((unused)))
      * Optimize Thread
      */
 
-    slist_t * slsiridb;
-    slist_t * slshards;
+    vec_t * slsiridb;
+    vec_t * slshards;
     siridb_t * siridb;
     siridb_shard_t * shard;
     uint8_t c = siri.cfg->shard_compression;
+    size_t i;
 
     log_info("Start optimize task");
 
@@ -284,10 +272,10 @@ static void OPTIMIZE_work(uv_work_t * work  __attribute__((unused)))
 
     uv_mutex_lock(&siri.siridb_mutex);
 
-    slsiridb = llist2slist(siri.siridb_list);
+    slsiridb = llist2vec(siri.siridb_list);
     if (slsiridb != NULL)
     {
-        for (size_t i = 0; i < slsiridb->len; i++)
+        for (i = 0; i < slsiridb->len; i++)
         {
             siridb = (siridb_t *) slsiridb->data[i];
             siridb_incref(siridb);
@@ -302,17 +290,16 @@ static void OPTIMIZE_work(uv_work_t * work  __attribute__((unused)))
         return;
     }
 
-    for (size_t i = 0; i < slsiridb->len; i++)
+    for (i = 0; i < slsiridb->len; i++)
     {
+        size_t j;
         siridb = (siridb_t *) slsiridb->data[i];
 
-#if DEBUG
         log_debug("Start optimizing database '%s'", siridb->dbname);
-#endif
 
         uv_mutex_lock(&siridb->shards_mutex);
 
-        slshards = imap_2slist_ref(siridb->shards);
+        slshards = imap_2vec_ref(siridb->shards);
 
         uv_mutex_unlock(&siridb->shards_mutex);
 
@@ -325,9 +312,9 @@ static void OPTIMIZE_work(uv_work_t * work  __attribute__((unused)))
 
         sleep(1);
 
-        for (size_t i = 0; i < slshards->len; i++)
+        for (j = 0; j < slshards->len; j++)
         {
-            shard = (siridb_shard_t *) slshards->data[i];
+            shard = (siridb_shard_t *) slshards->data[j];
 
             if (!siri_err &&
                 optimize.status != SIRI_OPTIMIZE_CANCELLED &&
@@ -375,31 +362,31 @@ static void OPTIMIZE_work(uv_work_t * work  __attribute__((unused)))
             siridb_shard_decref(shard);
         }
 
-        slist_free(slshards);
+        vec_free(slshards);
 
         if (siri_optimize_wait() == SIRI_OPTIMIZE_CANCELLED)
         {
             break;
         }
-#if DEBUG
         log_debug("Finished optimizing database '%s'", siridb->dbname);
-#endif
     }
     OPTIMIZE_cleanup(slsiridb);
 }
 
-static void OPTIMIZE_cleanup(slist_t * slsiridb)
+static void OPTIMIZE_cleanup(vec_t * slsiridb)
 {
     if (slsiridb != NULL)
     {
         siridb_t * siridb;
-        for (size_t i = 0; i < slsiridb->len; i++)
+        size_t i;
+
+        for (i = 0; i < slsiridb->len; i++)
         {
             siridb = (siridb_t *) slsiridb->data[i];
             siridb_decref(siridb);
         }
 
-        slist_free(slsiridb);
+        vec_free(slsiridb);
     }
 }
 

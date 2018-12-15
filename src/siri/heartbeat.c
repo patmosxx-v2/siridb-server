@@ -1,26 +1,14 @@
 /*
  * heartbeat.c - Heart-beat task SiriDB.
  *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
  * There is one and only one heart-beat task thread running for SiriDB. For
  * this reason we do not need to parse data but we should only take care for
  * locks while writing data.
- *
- * changes
- *  - initial version, 17-06-2016
- *
  */
 #include <logger/logger.h>
 #include <siri/db/server.h>
 #include <siri/heartbeat.h>
 #include <uv.h>
-
-#if DEBUG
-#include <siri/db/series.h>
-#endif
 
 static uv_timer_t heartbeat;
 
@@ -63,9 +51,7 @@ static void HEARTBEAT_cb(uv_timer_t * handle __attribute__((unused)))
     llist_node_t * siridb_node;
     llist_node_t * server_node;
 
-#if DEBUG
     log_debug("Start heart-beat task");
-#endif
 
     siridb_node = siri.siridb_list->first;
 
@@ -78,7 +64,7 @@ static void HEARTBEAT_cb(uv_timer_t * handle __attribute__((unused)))
         {
             server = (siridb_server_t *) server_node->data;
 
-            if (server != siridb->server && server->socket == NULL)
+            if (server != siridb->server && server->client == NULL)
             {
                 siridb_server_connect(siridb, server);
             }
@@ -92,5 +78,6 @@ static void HEARTBEAT_cb(uv_timer_t * handle __attribute__((unused)))
 
         siridb_node = siridb_node->next;
     }
+
 }
 

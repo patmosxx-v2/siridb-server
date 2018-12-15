@@ -1,13 +1,5 @@
 /*
  * fifo.c - First in, first out file buffer .
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 30-06-2016
- *
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -91,9 +83,7 @@ siridb_fifo_t * siridb_fifo_new(siridb_t * siridb)
     /* we have at least one fifo in the list */
     fifo->out = (siridb_ffile_t *) llist_shift(fifo->fifos);
 
-#if DEBUG
     assert (fifo->out != NULL);
-#endif
 
     if (fifo->out->fp == NULL)
     {
@@ -217,9 +207,7 @@ int siridb_fifo_commit(siridb_fifo_t * fifo)
         }
     }
 
-#if DEBUG
     assert (fifo->out != NULL);
-#endif
 
     return siri_err;
 }
@@ -241,9 +229,7 @@ int siridb_fifo_commit_err(siridb_fifo_t * fifo)
  */
 int siridb_fifo_close(siridb_fifo_t * fifo)
 {
-#if DEBUG
     assert (fifo->in->fp != NULL);
-#endif
     int rc = 0;
 
     /* close the 'in' fifo */
@@ -266,10 +252,7 @@ int siridb_fifo_close(siridb_fifo_t * fifo)
  */
 int siridb_fifo_open(siridb_fifo_t * fifo)
 {
-#if DEBUG
     assert (fifo->in->fp == NULL);
-#endif
-
     /* open fifo 'in' */
     siridb_ffile_open(fifo->in, "r+");
 
@@ -346,6 +329,7 @@ static int FIFO_init(siridb_fifo_t * fifo)
         struct dirent ** fifo_list;
         char * fn;
         int total = scandir(fifo->path, &fifo_list, NULL, alphasort);
+        int n;
 
         if (total < 0)
         {
@@ -354,7 +338,7 @@ static int FIFO_init(siridb_fifo_t * fifo)
             ERR_C
         }
 
-        for (int n = 0; n < total; n++)
+        for (n = 0; n < total; n++)
         {
             if (siridb_ffile_check_fn(fifo_list[n]->d_name))
             {

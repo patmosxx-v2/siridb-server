@@ -1,23 +1,13 @@
 /*
- * users.h - contains functions for a SiriDB database members.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 04-05-2016
- *
+ * users.h - Collection of database users.
  */
-#pragma once
+#ifndef SIRIDB_USERS_H_
+#define SIRIDB_USERS_H_
 
 #include <inttypes.h>
 #include <siri/db/db.h>
 #include <siri/db/user.h>
 #include <llist/llist.h>
-
-typedef struct siridb_s siridb_t;
-typedef struct siridb_user_s siridb_user_t;
 
 int siridb_users_load(siridb_t * siridb);
 void siridb_users_free(llist_t * users);
@@ -30,8 +20,10 @@ int siridb_users_drop_user(
         const char * username,
         char * err_msg);
 siridb_user_t * siridb_users_get_user(
-        llist_t * users,
+        siridb_t * siridb,
         const char * username,
         const char * password);
 int siridb_users_save(siridb_t * siridb);
 ssize_t siridb_users_get_file(char ** buffer, siridb_t * siridb);
+
+#endif  /* SIRIDB_USERS_H_ */

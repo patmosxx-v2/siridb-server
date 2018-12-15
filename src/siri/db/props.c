@@ -1,13 +1,5 @@
 /*
  * props.c - Functions to return SiriDB properties.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 17-03-2016
- *
  */
 #include <assert.h>
 #include <logger/logger.h>
@@ -18,6 +10,7 @@
 #include <siri/db/time.h>
 #include <siri/grammar/grammar.h>
 #include <siri/db/fifo.h>
+#include <siri/net/tcp.h>
 #include <siri/siri.h>
 #include <siri/version.h>
 #include <stdio.h>
@@ -175,8 +168,12 @@ extern char * who_am_i;
 
 void siridb_init_props(void)
 {
-    for (uint_fast16_t i = 0; i < KW_COUNT; i++)
+    uint_fast16_t i;
+
+    for (i = 0; i < KW_COUNT; i++)
+    {
         siridb_props[i] = NULL;
+    }
 
     siridb_props[CLERI_GID_K_ACTIVE_HANDLES - KW_OFFSET] =
             prop_active_handles;
@@ -272,7 +269,7 @@ static void prop_buffer_path(
         int map)
 {
     SIRIDB_PROP_MAP("buffer_path", 11)
-    qp_add_string(packer, siridb->buffer_path);
+    qp_add_string(packer, siridb->buffer->path);
 }
 
 static void prop_buffer_size(
@@ -281,7 +278,7 @@ static void prop_buffer_size(
         int map)
 {
     SIRIDB_PROP_MAP("buffer_size", 11)
-    qp_add_int32(packer, (int32_t) siridb->buffer_size);
+    qp_add_int32(packer, (int32_t) siridb->buffer->size);
 }
 
 static void prop_dbname(
@@ -362,7 +359,7 @@ static void prop_ip_support(
         int map)
 {
     SIRIDB_PROP_MAP("ip_support", 10)
-    qp_add_string(packer, sirinet_socket_ip_support_str(siri.cfg->ip_support));
+    qp_add_string(packer, sirinet_tcp_ip_support_str(siri.cfg->ip_support));
 }
 
 static void prop_libuv(
@@ -518,10 +515,8 @@ static void prop_time_precision(
 {
     SIRIDB_PROP_MAP("time_precision", 14)
 
-#if DEBUG
     assert (siridb->time->precision >= SIRIDB_TIME_SECONDS &&
             siridb->time->precision <= SIRIDB_TIME_NANOSECONDS);
-#endif
 
     qp_add_string(packer, siridb_time_short_map[siridb->time->precision]);
 }

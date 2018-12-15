@@ -1,15 +1,6 @@
 /*
- * pool.c - Generate pool lookup.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 25-03-2016
- *
+ * pool.c - SiriDB pool containing one or two servers.
  */
-
 #include <assert.h>
 #include <logger/logger.h>
 #include <siri/db/pool.h>
@@ -31,14 +22,15 @@
  */
 int siridb_pool_online(siridb_pool_t * pool)
 {
-    for (uint16_t i = 0; i < pool->len; i++)
+    uint16_t i;
+    for (i = 0; i < pool->len; i++)
     {
         if (siridb_server_is_online(pool->server[i]))
         {
-            return 1;  // true
+            return 1;  /* true  */
         }
     }
-    return 0;  // false
+    return 0;  /* false  */
 }
 
 /*
@@ -51,14 +43,15 @@ int siridb_pool_online(siridb_pool_t * pool)
  */
 int siridb_pool_available(siridb_pool_t * pool)
 {
-    for (uint16_t i = 0; i < pool->len; i++)
+    uint16_t i;
+    for (i = 0; i < pool->len; i++)
     {
         if (siridb_server_is_available(pool->server[i]))
         {
-            return 1;  // true
+            return 1;  /* true  */
         }
     }
-    return 0;  // false
+    return 0;  /* false  */
 }
 
 /*
@@ -71,14 +64,15 @@ int siridb_pool_available(siridb_pool_t * pool)
  */
 int siridb_pool_accessible(siridb_pool_t * pool)
 {
-    for (uint16_t i = 0; i < pool->len; i++)
+    uint16_t i;
+    for (i = 0; i < pool->len; i++)
     {
         if (siridb_server_is_accessible(pool->server[i]))
         {
-            return 1;  // true
+            return 1;  /* true  */
         }
     }
-    return 0;  // false
+    return 0;  /* false  */
 }
 
 
@@ -121,10 +115,8 @@ void siridb_pool_add_server(siridb_pool_t * pool, siridb_server_t * server)
     }
     else
     {
-#if DEBUG
         /* we can only have 1 or 2 servers per pool */
         assert (pool->len == 2);
-#endif
         /* add the server to the pool, ordered by UUID */
         if (siridb_server_cmp(pool->server[0], server) < 0)
         {
@@ -133,9 +125,7 @@ void siridb_pool_add_server(siridb_pool_t * pool, siridb_server_t * server)
         }
         else
         {
-#if DEBUG
             assert (siridb_server_cmp(pool->server[0], server) > 0);
-#endif
             pool->server[1] = pool->server[0];
             pool->server[0] = server;
 
@@ -176,8 +166,9 @@ int siridb_pool_send_pkg(
         int flags)
 {
     siridb_server_t * server = NULL;
+    uint16_t i;
 
-    for (uint16_t i = 0; i < pool->len; i++)
+    for (i = 0; i < pool->len; i++)
     {
         if ((flags & FLAG_ONLY_CHECK_ONLINE) ?
                 siridb_server_is_online(pool->server[i]) :

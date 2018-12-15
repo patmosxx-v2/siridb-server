@@ -1,21 +1,27 @@
 /*
  * groups.h - Groups (saved regular expressions).
  *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
+ * Info groups->mutex:
  *
- * changes
- *  - initial version, 16-08-2016
- *
- */
-#pragma once
+ *  Main thread:
+ *      groups->groups :    read (no lock)      write (lock)
+ *      groups->nseries :   read (lock)         write (lock)
+ *      groups->ngroups :   read (lock)         write (lock)
+ *      group->series :     read (lock)         write (not allowed)
 
-#include <ctree/ctree.h>
-#include <slist/slist.h>
-#include <uv.h>
-#include <siri/db/db.h>
-#include <siri/net/pkg.h>
+ *  Other threads:
+ *      groups->groups :    read (lock)         write (not allowed)
+ *      groups->nseries :   read (lock)         write (lock)
+ *      groups->ngroups :   read (lock)         write (lock)
+ *
+ *  Group thread:
+ *      group->series :     read (no lock)      write (lock)
+ *
+ *  Note:   One exception to 'not allowed' are the free functions
+ *          since they only run when no other references to the object exist.
+ */
+#ifndef SIRIDB_GROUPS_H_
+#define SIRIDB_GROUPS_H_
 
 typedef enum
 {
@@ -24,21 +30,15 @@ typedef enum
     GROUPS_CLOSED
 } siridb_groups_status_t;
 
+typedef struct siridb_groups_s siridb_groups_t;
 
 #define GROUPS_FLAG_DROPPED_SERIES 1
 
-typedef struct siridb_groups_s
-{
-    uint8_t status;
-    uint8_t flags;
-    uint8_t ref;
-    char * fn;
-    ct_t * groups;
-    slist_t * nseries;  /* list of series we need to assign to groups */
-    slist_t * ngroups;  /* list of groups which need initialization */
-    uv_mutex_t mutex;
-    uv_work_t work;
-} siridb_groups_t;
+#include <ctree/ctree.h>
+#include <vec/vec.h>
+#include <uv.h>
+#include <siri/db/db.h>
+#include <siri/net/pkg.h>
 
 siridb_groups_t * siridb_groups_new(siridb_t * siridb);
 void siridb_groups_start(siridb_groups_t * groups);
@@ -61,3 +61,17 @@ int siridb_groups_add_group(
 int siridb_groups_add_series(
         siridb_groups_t * groups,
         siridb_series_t * series);
+
+struct siridb_groups_s
+{
+    uint8_t status;
+    uint8_t flags;
+    uint8_t ref;
+    char * fn;
+    ct_t * groups;
+    vec_t * nseries;  /* list of series we need to assign to groups */
+    vec_t * ngroups;  /* list of groups which need initialization */
+    uv_mutex_t mutex;
+    uv_work_t work;
+};
+#endif  /* SIRIDB_GROUPS_H_ */

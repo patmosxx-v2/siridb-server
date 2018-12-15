@@ -1,13 +1,5 @@
 /*
- * logger.c - log module
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 08-03-2016
- *
+ * logger.h - Logging module.
  */
 #include <logger/logger.h>
 #include <stdio.h>
@@ -24,14 +16,14 @@ logger_t Logger = {
 
 #define LOGGER_CHR_MAP "DIWECU"
 
-#define KNRM  "\x1B[0m"     // normal
-#define KRED  "\x1B[31m"    // error
-#define KGRN  "\x1B[32m"    // info
-#define KYEL  "\x1B[33m"    // warning
-#define KBLU  "\x1B[34m"    // -- not used --
-#define KMAG  "\x1B[35m"    // critical
-#define KCYN  "\x1B[36m"    // debug
-#define KWHT  "\x1B[37m"    // -- not used --
+#define KNRM  "\x1B[0m"     /* normal           */
+#define KRED  "\x1B[31m"    /* error            */
+#define KGRN  "\x1B[32m"    /* info             */
+#define KYEL  "\x1B[33m"    /* warning          */
+#define KBLU  "\x1B[34m"    /* -- not used --   */
+#define KMAG  "\x1B[35m"    /* critical         */
+#define KCYN  "\x1B[36m"    /* debug            */
+#define KWHT  "\x1B[37m"    /* -- not used --   */
 
 const char * LOGGER_LEVEL_NAMES[LOGGER_NUM_LEVELS] =
     {"debug", "info", "warning", "error", "critical"};
@@ -81,7 +73,7 @@ const char * LOGGER_COLOR_MAP[LOGGER_NUM_LEVELS] =
 /*
  * Initialize the Logger.
  */
-void logger_init(struct _LOGGER_IO_FILE * ostream, int log_level)
+void logger_init(LOGGER_IO_FILE * ostream, int log_level)
 {
     Logger.ostream = ostream;
     logger_set_level(log_level);

@@ -1,13 +1,5 @@
 /*
- * filehandler.c - Filehandler for shard files.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 08-04-2016
- *
+ * handler.c - File handler for shard files.
  */
 #include <logger/logger.h>
 #include <siri/err.h>
@@ -42,13 +34,15 @@ siri_fh_t * siri_fh_new(uint16_t size)
  */
 void siri_fh_free(siri_fh_t * fh)
 {
+    siri_fp_t ** fp;
+    uint16_t i;
+
     if (fh == NULL)
     {
         return;
     }
 
-    siri_fp_t ** fp;
-    for (uint16_t i = 0; i < fh->size; i++)
+    for (i = 0; i < fh->size; i++)
     {
         fp = fh->fpointers + i;
 

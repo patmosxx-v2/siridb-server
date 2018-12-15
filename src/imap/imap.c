@@ -1,13 +1,5 @@
 /*
- * imap.c - map for uint64_t integer keys
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 03-08-2016
- *
+ * imap.c - Lookup map for uint64_t integer keys with set operation support.
  */
 #include <assert.h>
 #include <imap/imap.h>
@@ -24,8 +16,8 @@ static int IMAP_add(imap_node_t * node, uint64_t id, void * data);
 static void * IMAP_pop(imap_node_t * node, uint64_t id);
 static void IMAP_walk(imap_node_t * node, imap_cb cb, void * data, int * rc);
 static void IMAP_walkn(imap_node_t * node, imap_cb cb, void * data, size_t * n);
-static void IMAP_2slist(imap_node_t * node, slist_t * slist);
-static void IMAP_2slist_ref(imap_node_t * node, slist_t * slist);
+static void IMAP_2vec(imap_node_t * node, vec_t * vec);
+static void IMAP_2vec_ref(imap_node_t * node, vec_t * vec);
 static void IMAP_union_ref(imap_node_t * dest, imap_node_t * node);
 static void IMAP_intersection_ref(
         imap_node_t * dest,
@@ -54,7 +46,7 @@ imap_t * imap_new(void)
     }
 
     imap->len = 0;
-    imap->slist = NULL;
+    imap->vec = NULL;
 
     return imap;
 }
@@ -67,10 +59,11 @@ void imap_free(imap_t * imap, imap_free_cb cb)
     if (imap->len)
     {
         imap_node_t * nd;
+        uint_fast8_t i;
 
         if (cb == NULL)
         {
-            for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+            for (i = 0; i < IMAP_NODE_SZ; i++)
             {
                 nd = imap->nodes + i;
 
@@ -82,7 +75,7 @@ void imap_free(imap_t * imap, imap_free_cb cb)
         }
         else
         {
-            for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+            for (i = 0; i < IMAP_NODE_SZ; i++)
             {
                 nd = imap->nodes + i;
 
@@ -99,7 +92,7 @@ void imap_free(imap_t * imap, imap_free_cb cb)
         }
     }
 
-    slist_free(imap->slist);
+    vec_free(imap->vec);
     free(imap);
 }
 
@@ -114,10 +107,8 @@ void imap_free(imap_t * imap, imap_free_cb cb)
  */
 int imap_set(imap_t * imap, uint64_t id, void * data)
 {
-#if DEBUG
     /* insert NULL is not allowed */
     assert (data != NULL);
-#endif
     int rc;
     imap_node_t * nd = imap->nodes + (id % IMAP_NODE_SZ);
     id /= IMAP_NODE_SZ;
@@ -139,11 +130,11 @@ int imap_set(imap_t * imap, uint64_t id, void * data)
         }
     }
 
-    if (imap->slist != NULL && (
-            rc < 1 || slist_append_safe(&imap->slist, data)))
+    if (imap->vec != NULL && (
+            rc < 1 || vec_append_safe(&imap->vec, data)))
     {
-        slist_free(imap->slist);
-        imap->slist = NULL;
+        vec_free(imap->vec);
+        imap->vec = NULL;
     }
 
     return rc;
@@ -159,10 +150,9 @@ int imap_set(imap_t * imap, uint64_t id, void * data)
  */
 int imap_add(imap_t * imap, uint64_t id, void * data)
 {
-#if DEBUG
     /* insert NULL is not allowed */
     assert (data != NULL);
-#endif
+
     imap_node_t * nd = imap->nodes + (id % IMAP_NODE_SZ);
     id /= IMAP_NODE_SZ;
 
@@ -186,10 +176,10 @@ int imap_add(imap_t * imap, uint64_t id, void * data)
         imap->len++;
     }
 
-    if (imap->slist != NULL && slist_append_safe(&imap->slist, data))
+    if (imap->vec != NULL && vec_append_safe(&imap->vec, data))
     {
-        slist_free(imap->slist);
-        imap->slist = NULL;
+        vec_free(imap->vec);
+        imap->vec = NULL;
     }
 
     return 0;
@@ -234,10 +224,10 @@ void * imap_pop(imap_t * imap, uint64_t id)
     {
         imap->len--;
 
-        if (imap->slist != NULL)
+        if (imap->vec != NULL)
         {
-            slist_free(imap->slist);
-            imap->slist = NULL;
+            vec_free(imap->vec);
+            imap->vec = NULL;
         }
     }
 
@@ -257,8 +247,9 @@ int imap_walk(imap_t * imap, imap_cb cb, void * data)
     if (imap->len)
     {
         imap_node_t * nd;
+        uint_fast8_t i;
 
-        for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+        for (i = 0; i < IMAP_NODE_SZ; i++)
         {
             nd = imap->nodes + i;
 
@@ -288,8 +279,9 @@ void imap_walkn(imap_t * imap, size_t * n, imap_cb cb, void * data)
     if (imap->len)
     {
         imap_node_t * nd;
+        uint_fast8_t i;
 
-        for (uint_fast8_t i = 0; *n && i < IMAP_NODE_SZ; i++)
+        for (i = 0; *n && i < IMAP_NODE_SZ; i++)
         {
             nd = imap->nodes + i;
 
@@ -309,65 +301,66 @@ void imap_walkn(imap_t * imap, size_t * n, imap_cb cb, void * data)
 /*
  * Returns NULL in case an error has occurred.
  *
- * When successful a BORROWED pointer to slist is returned.
+ * When successful a BORROWED pointer to vec is returned.
  */
-slist_t * imap_slist(imap_t * imap)
+vec_t * imap_vec(imap_t * imap)
 {
-    if (imap->slist == NULL)
+    if (imap->vec == NULL)
     {
-        imap->slist = slist_new(imap->len);
+        imap->vec = vec_new(imap->len);
 
-        if (imap->slist != NULL && imap->len)
+        if (imap->vec != NULL && imap->len)
         {
             imap_node_t * nd;
+            uint_fast8_t i;
 
-            for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+            for (i = 0; i < IMAP_NODE_SZ; i++)
             {
                 nd = imap->nodes + i;
 
                 if (nd->data != NULL)
                 {
-                    slist_append(imap->slist, nd->data);
+                    vec_append(imap->vec, nd->data);
                 }
 
                 if (nd->nodes != NULL)
                 {
-                    IMAP_2slist(nd, imap->slist);
+                    IMAP_2vec(nd, imap->vec);
                 }
             }
         }
     }
-    return imap->slist;
+    return imap->vec;
 }
 
 /*
  * Returns NULL in case an error has occurred.
  *
- * When successful a the slist is returned and imap->slist is set to NULL.
+ * When successful a the vec is returned and imap->vec is set to NULL.
  *
  * This can be used when being sure this is the only time you need the list
  * and prevents making a copy.
  */
-slist_t * imap_slist_pop(imap_t * imap)
+vec_t * imap_vec_pop(imap_t * imap)
 {
-    slist_t * slist = imap_slist(imap);
-    imap->slist = NULL;
-    return slist;
+    vec_t * vec = imap_vec(imap);
+    imap->vec = NULL;
+    return vec;
 }
 
 /*
  * Returns NULL in case an error has occurred.
  *
- * When successful a NEW slist is returned.
+ * When successful a NEW vec is returned.
  */
-slist_t * imap_2slist(imap_t * imap)
+vec_t * imap_2vec(imap_t * imap)
 {
-    slist_t * slist = imap_slist(imap);
-    if (slist != NULL)
+    vec_t * vec = imap_vec(imap);
+    if (vec != NULL)
     {
-        slist = slist_copy(slist);
+        vec = vec_copy(vec);
     }
-    return slist;
+    return vec;
 }
 
 /*
@@ -381,42 +374,44 @@ slist_t * imap_2slist(imap_t * imap)
  *
  * Returns NULL in case an error has occurred.
  */
-slist_t * imap_2slist_ref(imap_t * imap)
+vec_t * imap_2vec_ref(imap_t * imap)
 {
-    if (imap->slist == NULL)
+    if (imap->vec == NULL)
     {
-        imap->slist = slist_new(imap->len);
+        imap->vec = vec_new(imap->len);
 
-        if (imap->slist != NULL && imap->len)
+        if (imap->vec != NULL && imap->len)
         {
             imap_node_t * nd;
+            uint_fast8_t i;
 
-            for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+            for (i = 0; i < IMAP_NODE_SZ; i++)
             {
                 nd = imap->nodes + i;
 
                 if (nd->data != NULL)
                 {
-                    slist_append(imap->slist, nd->data);
-                    slist_object_incref(nd->data);
+                    vec_append(imap->vec, nd->data);
+                    vec_object_incref(nd->data);
                 }
 
                 if (nd->nodes != NULL)
                 {
-                    IMAP_2slist_ref(nd, imap->slist);
+                    IMAP_2vec_ref(nd, imap->vec);
                 }
             }
         }
     }
     else
     {
-        for (size_t i = 0; i < imap->slist->len; i++)
+        size_t i;
+        for (i = 0; i < imap->vec->len; i++)
         {
-            slist_object_incref(imap->slist->data[i]);
+            vec_object_incref(imap->vec->data[i]);
         }
     }
 
-    return (imap->slist == NULL) ? NULL : slist_copy(imap->slist);
+    return (imap->vec == NULL) ? NULL : vec_copy(imap->vec);
 }
 
 /*
@@ -433,18 +428,19 @@ void imap_union_ref(
         imap_t * imap,
         imap_free_cb decref_cb __attribute__((unused)))
 {
-    if (dest->slist != NULL)
+    if (dest->vec != NULL)
     {
-        slist_free(dest->slist);
-        dest->slist = NULL;
+        vec_free(dest->vec);
+        dest->vec = NULL;
     }
 
     if (imap->len)
     {
         imap_node_t * dest_nd;
         imap_node_t * imap_nd;
+        uint_fast8_t i;
 
-        for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+        for (i = 0; i < IMAP_NODE_SZ; i++)
         {
             dest_nd = dest->nodes + i;
             imap_nd = imap->nodes + i;
@@ -453,12 +449,10 @@ void imap_union_ref(
             {
                 if (dest_nd->data != NULL)
                 {
-#if DEBUG
                     /* this must be the same object */
                     assert (imap_nd->data == dest_nd->data);
-#endif
                     /* we are sure there is a ref left */
-                    slist_object_decref(imap_nd->data);
+                    vec_object_decref(imap_nd->data);
                 }
                 else
                 {
@@ -486,7 +480,7 @@ void imap_union_ref(
     }
 
     /* cleanup source imap */
-    slist_free(imap->slist);
+    vec_free(imap->vec);
     free(imap);
 }
 
@@ -504,16 +498,17 @@ void imap_intersection_ref(
         imap_t * imap,
         imap_free_cb decref_cb)
 {
-    if (dest->slist != NULL)
+    if (dest->vec != NULL)
     {
-        slist_free(dest->slist);
-        dest->slist = NULL;
+        vec_free(dest->vec);
+        dest->vec = NULL;
     }
 
     imap_node_t * dest_nd;
     imap_node_t * imap_nd;
+    uint_fast8_t i;
 
-    for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+    for (i = 0; i < IMAP_NODE_SZ; i++)
     {
         dest_nd = dest->nodes + i;
         imap_nd = imap->nodes + i;
@@ -550,7 +545,7 @@ void imap_intersection_ref(
     }
 
     /* cleanup source imap */
-    slist_free(imap->slist);
+    vec_free(imap->vec);
     free(imap);
 }
 
@@ -568,18 +563,19 @@ void imap_difference_ref(
         imap_t * imap,
         imap_free_cb decref_cb)
 {
-    if (dest->slist != NULL)
+    if (dest->vec != NULL)
     {
-        slist_free(dest->slist);
-        dest->slist = NULL;
+        vec_free(dest->vec);
+        dest->vec = NULL;
     }
 
     if (imap->len)
     {
         imap_node_t * dest_nd;
         imap_node_t * imap_nd;
+        uint_fast8_t i;
 
-        for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+        for (i = 0; i < IMAP_NODE_SZ; i++)
         {
             dest_nd = dest->nodes + i;
             imap_nd = imap->nodes + i;
@@ -588,12 +584,11 @@ void imap_difference_ref(
             {
                 if (dest_nd->data != NULL)
                 {
-#if DEBUG
                     /* this must be the same object */
                     assert (imap_nd->data == dest_nd->data);
-#endif
+
                     /* we are sure to have one ref left */
-                    slist_object_decref(dest_nd->data);
+                    vec_object_decref(dest_nd->data);
                     dest_nd->data = NULL;
                     dest->len--;
 
@@ -619,7 +614,7 @@ void imap_difference_ref(
     }
 
     /* cleanup source imap */
-    slist_free(imap->slist);
+    vec_free(imap->vec);
     free(imap);
 }
 
@@ -637,18 +632,19 @@ void imap_symmetric_difference_ref(
         imap_t * imap,
         imap_free_cb decref_cb)
 {
-    if (dest->slist != NULL)
+    if (dest->vec != NULL)
     {
-        slist_free(dest->slist);
-        dest->slist = NULL;
+        vec_free(dest->vec);
+        dest->vec = NULL;
     }
 
     if (imap->len)
     {
         imap_node_t * dest_nd;
         imap_node_t * imap_nd;
+        uint_fast8_t i;
 
-        for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+        for (i = 0; i < IMAP_NODE_SZ; i++)
         {
             dest_nd = dest->nodes + i;
             imap_nd = imap->nodes + i;
@@ -657,12 +653,11 @@ void imap_symmetric_difference_ref(
             {
                 if (dest_nd->data != NULL)
                 {
-#if DEBUG
                     /* this must be the same object */
                     assert (imap_nd->data == dest_nd->data);
-#endif
+
                     /* we are sure to have one ref left */
-                    slist_object_decref(dest_nd->data);
+                    vec_object_decref(dest_nd->data);
 
                     /* but now we are not sure anymore */
                     (*decref_cb)(imap_nd->data);
@@ -699,15 +694,16 @@ void imap_symmetric_difference_ref(
     }
 
     /* cleanup source imap */
-    slist_free(imap->slist);
+    vec_free(imap->vec);
     free(imap);
 }
 
 static void IMAP_node_free(imap_node_t * node)
 {
     imap_node_t * nd;
+    uint_fast8_t i;
 
-    for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+    for (i = 0; i < IMAP_NODE_SZ; i++)
     {
         if ((nd = node->nodes + i)->nodes != NULL)
         {
@@ -721,8 +717,9 @@ static void IMAP_node_free(imap_node_t * node)
 static void IMAP_node_free_cb(imap_node_t * node, imap_free_cb cb)
 {
     imap_node_t * nd;
+    uint_fast8_t i;
 
-    for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+    for (i = 0; i < IMAP_NODE_SZ; i++)
     {
         nd = node->nodes + i;
 
@@ -871,8 +868,9 @@ static void * IMAP_pop(imap_node_t * node, uint64_t id)
 static void IMAP_walk(imap_node_t * node, imap_cb cb, void * data, int * rc)
 {
     imap_node_t * nd;
+    uint_fast8_t i;
 
-    for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+    for (i = 0; i < IMAP_NODE_SZ; i++)
     {
         nd = node->nodes + i;
 
@@ -891,8 +889,9 @@ static void IMAP_walk(imap_node_t * node, imap_cb cb, void * data, int * rc)
 static void IMAP_walkn(imap_node_t * node, imap_cb cb, void * data, size_t * n)
 {
     imap_node_t * nd;
+    uint_fast8_t i;
 
-    for (uint_fast8_t i = 0; *n && i < IMAP_NODE_SZ; i++)
+    for (i = 0; *n && i < IMAP_NODE_SZ; i++)
     {
         nd = node->nodes + i;
 
@@ -908,43 +907,45 @@ static void IMAP_walkn(imap_node_t * node, imap_cb cb, void * data, size_t * n)
     }
 }
 
-static void IMAP_2slist(imap_node_t * node, slist_t * slist)
+static void IMAP_2vec(imap_node_t * node, vec_t * vec)
 {
     imap_node_t * nd;
+    uint_fast8_t i;
 
-    for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+    for (i = 0; i < IMAP_NODE_SZ; i++)
     {
         nd = node->nodes + i;
 
         if (nd->data != NULL)
         {
-            slist_append(slist, nd->data);
+            vec_append(vec, nd->data);
         }
 
         if (nd->nodes != NULL)
         {
-            IMAP_2slist(nd, slist);
+            IMAP_2vec(nd, vec);
         }
     }
 }
 
-static void IMAP_2slist_ref(imap_node_t * node, slist_t * slist)
+static void IMAP_2vec_ref(imap_node_t * node, vec_t * vec)
 {
     imap_node_t * nd;
+    uint_fast8_t i;
 
-    for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+    for (i = 0; i < IMAP_NODE_SZ; i++)
     {
         nd = node->nodes + i;
 
         if (nd->data != NULL)
         {
-            slist_append(slist, nd->data);
-            slist_object_incref(nd->data);
+            vec_append(vec, nd->data);
+            vec_object_incref(nd->data);
         }
 
         if (nd->nodes != NULL)
         {
-            IMAP_2slist_ref(nd, slist);
+            IMAP_2vec_ref(nd, vec);
         }
     }
 }
@@ -953,8 +954,9 @@ static void IMAP_union_ref(imap_node_t * dest, imap_node_t * node)
 {
     imap_node_t * dest_nd;
     imap_node_t * node_nd;
+    uint_fast8_t i;
 
-    for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+    for (i = 0; i < IMAP_NODE_SZ; i++)
     {
         dest_nd = dest->nodes + i;
         node_nd = node->nodes + i;
@@ -963,12 +965,10 @@ static void IMAP_union_ref(imap_node_t * dest, imap_node_t * node)
         {
             if (dest_nd->data != NULL)
             {
-#if DEBUG
                 /* this must be the same object */
                 assert (node_nd->data == dest_nd->data);
-#endif
                 /* we are sure there is a ref left */
-                slist_object_decref(node_nd->data);
+                vec_object_decref(node_nd->data);
             }
             else
             {
@@ -1003,8 +1003,9 @@ static void IMAP_intersection_ref(
 {
     imap_node_t * dest_nd;
     imap_node_t * node_nd;
+    uint_fast8_t i;
 
-    for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+    for (i = 0; i < IMAP_NODE_SZ; i++)
     {
         dest_nd = dest->nodes + i;
         node_nd = node->nodes + i;
@@ -1058,8 +1059,9 @@ static void IMAP_difference_ref(
 {
     imap_node_t * dest_nd;
     imap_node_t * node_nd;
+    uint_fast8_t i;
 
-    for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+    for (i = 0; i < IMAP_NODE_SZ; i++)
     {
         dest_nd = dest->nodes + i;
         node_nd = node->nodes + i;
@@ -1068,12 +1070,10 @@ static void IMAP_difference_ref(
         {
             if (dest_nd->data != NULL)
             {
-#if DEBUG
                 /* this must be the same object */
                 assert (node_nd->data == dest_nd->data);
-#endif
                 /* we are sure to have one ref left */
-                slist_object_decref(dest_nd->data);
+                vec_object_decref(dest_nd->data);
                 dest_nd->data = NULL;
                 dest->size--;
 
@@ -1113,8 +1113,9 @@ static void IMAP_symmetric_difference_ref(
 {
     imap_node_t * dest_nd;
     imap_node_t * node_nd;
+    uint_fast8_t i;
 
-    for (uint_fast8_t i = 0; i < IMAP_NODE_SZ; i++)
+    for (i = 0; i < IMAP_NODE_SZ; i++)
     {
         dest_nd = dest->nodes + i;
         node_nd = node->nodes + i;
@@ -1123,12 +1124,11 @@ static void IMAP_symmetric_difference_ref(
         {
             if (dest_nd->data != NULL)
             {
-#if DEBUG
                 /* this must be the same object */
                 assert (node_nd->data == dest_nd->data);
-#endif
+
                 /* we are sure to have one ref left */
-                slist_object_decref(dest_nd->data);
+                vec_object_decref(dest_nd->data);
 
                 /* but now we are not sure anymore */
                 (*decref_cb)(node_nd->data);

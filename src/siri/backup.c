@@ -1,13 +1,5 @@
 /*
  * backup.c - Set SiriDB in backup mode.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 27-09-2016
- *
  */
 #include <assert.h>
 #include <logger/logger.h>
@@ -63,10 +55,8 @@ void siri_backup_destroy(siri_t * siri)
  */
 int siri_backup_enable(siri_t * siri, siridb_t * siridb)
 {
-#if DEBUG
     assert (~siridb->server->flags & SERVER_FLAG_BACKUP_MODE);
     assert (~siridb->server->flags & SERVER_FLAG_REINDEXING);
-#endif
 
     llist_t * llist = (llist_t *) siri->backup->data;
 
@@ -105,9 +95,7 @@ int siri_backup_enable(siri_t * siri, siridb_t * siridb)
 
 int siri_backup_disable(siri_t * siri, siridb_t * siridb)
 {
-#if DEBUG
     assert (siridb->server->flags & SERVER_FLAG_BACKUP_MODE);
-#endif
 
     int rc = 0;
 
@@ -173,11 +161,11 @@ static void BACKUP_walk(siridb_t * siridb, void * args __attribute__((unused)))
         siridb_fifo_close(siridb->fifo);
     }
 
-    if (siridb->buffer_fp != NULL)
+    if (siridb->buffer->fp != NULL)
     {
-        if (fclose(siridb->buffer_fp) == 0)
+        if (fclose(siridb->buffer->fp) == 0)
         {
-            siridb->buffer_fp = NULL;
+            siridb->buffer->fp = NULL;
         }
         else
         {
@@ -211,13 +199,14 @@ static void BACKUP_walk(siridb_t * siridb, void * args __attribute__((unused)))
 
     if (SIRI_OPTIMZE_IS_PAUSED)
     {
+        size_t i;
         siridb_shard_t * shard;
 
         /*
          * A lock is not needed since the optimize thread is paused and this
          * is running from the main thread.
          */
-        slist_t * shard_list = imap_2slist(siridb->shards);
+        vec_t * shard_list = imap_2vec(siridb->shards);
 
         if (shard_list == NULL)
         {
@@ -225,7 +214,7 @@ static void BACKUP_walk(siridb_t * siridb, void * args __attribute__((unused)))
                     "Cannot create shard list so not all shard files "
                     "will be closed in backup mode.");
         }
-        else for (size_t i = 0; i < shard_list->len; i++)
+        else for (i = 0; i < shard_list->len; i++)
         {
             shard = (siridb_shard_t *) shard_list->data[i];
 
@@ -240,6 +229,6 @@ static void BACKUP_walk(siridb_t * siridb, void * args __attribute__((unused)))
             }
         }
 
-        slist_free(shard_list);
+        vec_free(shard_list);
     }
 }

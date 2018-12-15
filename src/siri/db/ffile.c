@@ -1,14 +1,5 @@
 /*
  * ffile.c - FIFO file.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 30-06-2016
- *
- *
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -22,8 +13,8 @@
 #include <string.h>
 #include <unistd.h>
 
-#define FFILE_DEFAULT_SIZE 104857600  // 100 MB
-#define FFILE_NUMBERS 9  // how much numbers are used to generate the file.
+#define FFILE_DEFAULT_SIZE 104857600  /* 100 MB  */
+#define FFILE_NUMBERS 9  /* how much numbers are used to generate the file.  */
 
 /*
  * Open the fifo file. (set both the file pointer and file descriptor
@@ -161,9 +152,7 @@ siridb_ffile_result_t siridb_ffile_append(
         siridb_ffile_t * ffile,
         sirinet_pkg_t * pkg)
 {
-#if DEBUG
     assert (ffile->fp != NULL);
-#endif
 
     uint32_t size = pkg->len + sizeof(sirinet_pkg_t);
 
@@ -211,10 +200,8 @@ int siridb_ffile_check_fn(const char * fn)
  */
 sirinet_pkg_t * siridb_ffile_pop(siridb_ffile_t * ffile)
 {
-#if DEBUG
     assert (ffile->next_size);
     assert (ffile->fp != NULL);
-#endif
     if (fseeko(
             ffile->fp,
             -(long int) (ffile->next_size + sizeof(uint32_t)),
@@ -260,9 +247,7 @@ sirinet_pkg_t * siridb_ffile_pop(siridb_ffile_t * ffile)
  */
 int siridb_ffile_pop_commit(siridb_ffile_t * ffile)
 {
-#if DEBUG
     assert (ffile->next_size && ffile->fp != NULL);
-#endif
 
     ffile->size -= ffile->next_size + sizeof(uint32_t);
 

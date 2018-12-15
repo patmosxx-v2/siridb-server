@@ -1,13 +1,5 @@
 /*
- * xpath.c - Path and file tools
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 15-07-2016
- *
+ * xpath.c - Path and file tools.
  */
 #include <limits.h>
 #include <logger/logger.h>
@@ -84,7 +76,7 @@ ssize_t xpath_get_content(char ** buffer, const char * fn)
 
 /*
  * Get the current executable path.
- * (path should at least have size SIRI_PATH_MAX)
+ * (path should at least have size XPATH_MAX)
  *
  * Returns 0 if successful or -1 in case of an error.
  * (this functions writes logging in case of errors)
@@ -93,7 +85,7 @@ int xpath_get_exec_path(char * path)
 {
     char* path_end;
 
-    if (readlink("/proc/self/exe", path, SIRI_PATH_MAX) == -1)
+    if (readlink("/proc/self/exe", path, XPATH_MAX) == -1)
     {
         log_critical("Cannot read executable path");
         return -1;

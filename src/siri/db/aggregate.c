@@ -1,13 +1,5 @@
 /*
  * aggregate.c - SiriDB aggregation methods.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 15-04-2016
- *
  */
 #include <assert.h>
 #include <limits.h>
@@ -17,25 +9,25 @@
 #include <siri/db/variance.h>
 #include <siri/grammar/grammar.h>
 #include <siri/db/re.h>
-#include <slist/slist.h>
+#include <vec/vec.h>
 #include <stddef.h>
-#include <strextra/strextra.h>
+#include <xstr/xstr.h>
 #include <math.h>
 
 #define AGGR_NEW                                    \
 if ((aggr = AGGREGATE_new(gid)) == NULL)            \
 {                                                   \
     sprintf(err_msg, "Memory allocation error.");   \
-    siridb_aggregate_list_free(slist);              \
+    siridb_aggregate_list_free(vec);              \
     return NULL;                                    \
 }
 
-#define SLIST_APPEND                                \
-if (slist_append_safe(&slist, aggr))                \
+#define VEC_APPEND                                \
+if (vec_append_safe(&vec, aggr))                \
 {                                                   \
     sprintf(err_msg, "Memory allocation error.");   \
     AGGREGATE_free(aggr);                           \
-    siridb_aggregate_list_free(slist);              \
+    siridb_aggregate_list_free(vec);              \
     return NULL;                                    \
 }
 
@@ -177,7 +169,8 @@ static int aggr_last(
  */
 void siridb_init_aggregates(void)
 {
-    for (uint_fast16_t i = 0; i < F_OFFSET; i++)
+    uint_fast16_t i;
+    for (i = 0; i < F_OFFSET; i++)
     {
         AGGREGATES[i] = NULL;
     }
@@ -203,12 +196,12 @@ void siridb_init_aggregates(void)
 /*
  * Returns NULL in case an error has occurred and the err_msg will be set.
  */
-slist_t * siridb_aggregate_list(cleri_children_t * children, char * err_msg)
+vec_t * siridb_aggregate_list(cleri_children_t * children, char * err_msg)
 {
     uint32_t gid;
     siridb_aggr_t * aggr;
-    slist_t * slist = slist_new(SLIST_DEFAULT_SIZE);
-    if (slist == NULL)
+    vec_t * vec = vec_new(VEC_DEFAULT_SIZE);
+    if (vec == NULL)
     {
         sprintf(err_msg, "Memory allocation error.");
         return NULL;
@@ -232,7 +225,7 @@ slist_t * siridb_aggregate_list(cleri_children_t * children, char * err_msg)
                             "Limit must be an integer value "
                             "larger than zero.");
                     AGGREGATE_free(aggr);
-                    siridb_aggregate_list_free(slist);
+                    siridb_aggregate_list_free(vec);
                     return NULL;
                 }
 
@@ -302,7 +295,7 @@ slist_t * siridb_aggregate_list(cleri_children_t * children, char * err_msg)
                 }
             }
 
-            SLIST_APPEND
+            VEC_APPEND
 
             break;
 
@@ -331,12 +324,12 @@ slist_t * siridb_aggregate_list(cleri_children_t * children, char * err_msg)
                 if (AGGREGATE_init_filter(aggr, onode, err_msg))
                 {
                     AGGREGATE_free(aggr);
-                    siridb_aggregate_list_free(slist);
+                    siridb_aggregate_list_free(vec);
                     return NULL;  /* err_msg is set */
                 }
             }
 
-            SLIST_APPEND
+            VEC_APPEND
 
             break;
 
@@ -358,7 +351,7 @@ slist_t * siridb_aggregate_list(cleri_children_t * children, char * err_msg)
                                 "Time-span must be an integer value "
                                 "larger than zero.");
                         AGGREGATE_free(aggr);
-                        siridb_aggregate_list_free(slist);
+                        siridb_aggregate_list_free(vec);
                         return NULL;
                     }
 
@@ -374,7 +367,7 @@ slist_t * siridb_aggregate_list(cleri_children_t * children, char * err_msg)
                                     "Group by time must be an integer "
                                     "value larger than zero.");
                             AGGREGATE_free(aggr);
-                            siridb_aggregate_list_free(slist);
+                            siridb_aggregate_list_free(vec);
                             return NULL;
                         }
 
@@ -383,7 +376,7 @@ slist_t * siridb_aggregate_list(cleri_children_t * children, char * err_msg)
                 }
             }
 
-            SLIST_APPEND
+            VEC_APPEND
 
             break;
 
@@ -416,12 +409,12 @@ slist_t * siridb_aggregate_list(cleri_children_t * children, char * err_msg)
                             "Group by time must be an integer value "
                             "larger than zero.");
                     AGGREGATE_free(aggr);
-                    siridb_aggregate_list_free(slist);
+                    siridb_aggregate_list_free(vec);
                     return NULL;
                 }
             }
 
-            SLIST_APPEND
+            VEC_APPEND
 
             break;
 
@@ -446,15 +439,16 @@ slist_t * siridb_aggregate_list(cleri_children_t * children, char * err_msg)
         children = children->next->next;
     }
 
-    return slist;
+    return vec;
 }
 
 /*
  * Destroy aggregates list. (parsing NULL is not allowed)
  */
-void siridb_aggregate_list_free(slist_t * alist)
+void siridb_aggregate_list_free(vec_t * alist)
 {
-    for (size_t i = 0; i < alist->len; i++)
+    size_t i;
+    for (i = 0; i < alist->len; i++)
     {
         AGGREGATE_free(alist->data[i]);
     }
@@ -491,10 +485,7 @@ siridb_points_t * siridb_aggregate_run(
         siridb_aggr_t * aggr,
         char * err_msg)
 {
-#if DEBUG
     assert (source->len);
-#endif
-
     if (aggr->limit)
     {
         return AGGREGATE_limit(source, aggr, err_msg);
@@ -592,7 +583,7 @@ static int AGGREGATE_init_filter(
 
     case CLERI_GID_R_FLOAT:
         aggr->filter_tp = TP_DOUBLE;
-        aggr->filter_via.real = strx_to_double(node->str, node->len);
+        aggr->filter_via.real = xstr_to_double(node->str, node->len);
         break;
 
     case CLERI_GID_STRING:
@@ -603,7 +594,7 @@ static int AGGREGATE_init_filter(
             sprintf(err_msg, "Memory allocation error.");
             return -1;
         }
-        strx_extract_string(
+        xstr_extract_string(
                 (char *) aggr->filter_via.raw, node->str, node->len);
         return 0;
 
@@ -812,10 +803,10 @@ static int AGGREGATE_regex_cmp(siridb_aggr_t * aggr, char * val)
             aggr->regex,
             (PCRE2_SPTR8) val,
             strlen(val),
-            0,                     // start looking at this point
-            0,                     // OPTIONS
+            0,                     /* start looking at this point   */
+            0,                     /* OPTIONS                       */
             aggr->match_data,
-            0);                    // length of sub_str_vec
+            0);                    /* length of sub_str_vec         */
     return aggr->filter_opr == CEXPR_EQ ? ret >= 0 : ret < 0;
 }
 
@@ -872,7 +863,7 @@ static siridb_points_t * AGGREGATE_filter(
                     i < source->len;
                     i++, spt++)
             {
-                if (value.str != NULL  // NULL is a regular expression
+                if (value.str != NULL  /* NULL is a regular expression  */
                         ? cexpr_str_cmp(
                                 aggr->filter_opr,
                                 spt->val.str, value.str)
@@ -927,6 +918,7 @@ static siridb_points_t * AGGREGATE_filter(
 
         default:
             assert (0);
+            dpt = NULL;
             break;
         }
 
@@ -1119,13 +1111,7 @@ static siridb_points_t * AGGREGATE_group_by(
             points->data = point;
         }
     }
-#if DEBUG
-    else
-    {
-        /* if not smaller it must be equal */
-        assert (points->len == max_sz);
-    }
-#endif
+    /* else { assert (points->len == max_sz); } */
 
     return points;
 }
@@ -1146,9 +1132,7 @@ static int aggr_derivative(
         siridb_aggr_t * aggr,
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     if (points->tp == TP_STRING)
     {
@@ -1176,6 +1160,8 @@ static int aggr_derivative(
             break;
         default:
             assert (0);
+            first = 0.0;
+            last = 0.0;
             break;
         }
 
@@ -1192,9 +1178,7 @@ static int aggr_difference(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     switch (points->tp)
     {
@@ -1250,9 +1234,7 @@ static int aggr_max(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     if (points->tp == TP_STRING)
     {
@@ -1263,7 +1245,8 @@ static int aggr_max(
     if (points->tp == TP_INT)
     {
         int64_t max = points->data->val.int64;
-        for (size_t i = 1; i < points->len; i++)
+        size_t i;
+        for (i = 1; i < points->len; i++)
         {
             if ((points->data + i)->val.int64 > max)
             {
@@ -1275,7 +1258,8 @@ static int aggr_max(
     else
     {
         double max = points->data->val.real;
-        for (size_t i = 1; i < points->len; i++)
+        size_t i;
+        for (i = 1; i < points->len; i++)
         {
             if ((points->data + i)->val.real > max)
             {
@@ -1294,11 +1278,10 @@ static int aggr_mean(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     double sum = 0.0;
+    size_t i;
 
     switch (points->tp)
     {
@@ -1307,14 +1290,14 @@ static int aggr_mean(
         return -1;
 
     case TP_INT:
-        for (size_t i = 0; i < points->len; i++)
+        for (i = 0; i < points->len; i++)
         {
             sum += (points->data + i)->val.int64;
         }
         break;
 
     case TP_DOUBLE:
-        for (size_t i = 0; i < points->len; i++)
+        for (i = 0; i < points->len; i++)
         {
             sum += (points->data + i)->val.real;
         }
@@ -1336,9 +1319,7 @@ static int aggr_median(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     if (points->tp == TP_STRING)
     {
@@ -1380,9 +1361,7 @@ static int aggr_median_high(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     if (points->tp == TP_STRING)
     {
@@ -1415,9 +1394,7 @@ static int aggr_median_low(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     if (points->tp == TP_STRING)
     {
@@ -1450,9 +1427,7 @@ static int aggr_min(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     if (points->tp == TP_STRING)
     {
@@ -1463,7 +1438,8 @@ static int aggr_min(
     if (points->tp == TP_INT)
     {
         int64_t min = points->data->val.int64;
-        for (size_t i = 1; i < points->len; i++)
+        size_t i;
+        for (i = 1; i < points->len; i++)
         {
             if ((points->data + i)->val.int64 < min)
             {
@@ -1475,7 +1451,8 @@ static int aggr_min(
     else
     {
         double min = points->data->val.real;
-        for (size_t i = 1; i < points->len; i++)
+        size_t i;
+        for (i = 1; i < points->len; i++)
         {
             if ((points->data + i)->val.real < min)
             {
@@ -1494,9 +1471,7 @@ static int aggr_pvariance(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     switch (points->tp)
     {
@@ -1523,9 +1498,7 @@ static int aggr_sum(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     switch (points->tp)
     {
@@ -1537,7 +1510,8 @@ static int aggr_sum(
         {
             int64_t sum = 0;
             int64_t tmp;
-            for (size_t i = 0; i < points->len; i++)
+            size_t i;
+            for (i = 0; i < points->len; i++)
             {
                 tmp = (points->data + i)->val.int64;
                 if ((tmp > 0 && sum > LLONG_MAX - tmp) ||
@@ -1555,7 +1529,8 @@ static int aggr_sum(
     case TP_DOUBLE:
         {
             double sum = 0.0;
-            for (size_t i = 0; i < points->len; i++)
+            size_t i;
+            for (i = 0; i < points->len; i++)
             {
                 sum += (points->data + i)->val.real;
             }
@@ -1577,9 +1552,7 @@ static int aggr_variance(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     switch (points->tp)
     {
@@ -1607,9 +1580,7 @@ static int aggr_stddev(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg)
 {
-#if DEBUG
     assert (points->len);
-#endif
 
     switch (points->tp)
     {
@@ -1637,9 +1608,8 @@ static int aggr_first(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg __attribute__((unused)))
 {
-#if DEBUG
     assert (points->len);
-#endif
+
     siridb_point_t * source = points->data;
 
     switch (points->tp)
@@ -1673,9 +1643,8 @@ static int aggr_last(
         siridb_aggr_t * aggr __attribute__((unused)),
         char * err_msg __attribute__((unused)))
 {
-#if DEBUG
     assert (points->len);
-#endif
+
     siridb_point_t * source = points->data + (points->len - 1);
 
     switch (points->tp)

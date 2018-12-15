@@ -1,15 +1,8 @@
 /*
  * median.h - Calculate median, median high and median low.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 16-04-2016
- *
  */
-#pragma once
+#ifndef SIRIDB_MEDIAN_H_
+#define SIRIDB_MEDIAN_H_
 
 #include <siri/db/points.h>
 #include <inttypes.h>
@@ -28,3 +21,6 @@ int siridb_median_real(
         siridb_point_t * point,
         siridb_points_t * points,
         double percentage);
+
+
+#endif  /* SIRIDB_MEDIAN_H_ */

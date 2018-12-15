@@ -1,14 +1,5 @@
-
 /*
- * clserver.c - TCP server for serving client requests.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 09-03-2016
- *
+ * clserver.c - Listen for client requests.
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -19,27 +10,27 @@
 #include <logger/logger.h>
 #include <qpack/qpack.h>
 #include <siri/siri.h>
-#include <siri/admin/account.h>
-#include <siri/admin/request.h>
+#include <siri/service/account.h>
+#include <siri/service/request.h>
+#include <siri/db/access.h>
 #include <siri/db/auth.h>
 #include <siri/db/insert.h>
 #include <siri/db/query.h>
 #include <siri/db/replicate.h>
+#include <siri/db/server.h>
 #include <siri/db/servers.h>
 #include <siri/db/users.h>
 #include <siri/err.h>
 #include <siri/net/clserver.h>
 #include <siri/net/promises.h>
 #include <siri/net/protocol.h>
-#include <siri/net/socket.h>
+#include <siri/net/tcp.h>
 #include <siri/siri.h>
 #include <siri/version.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <siri/db/server.h>
-#include <siri/db/access.h>
 
 const unsigned long int WARNING_PKG_SIZE = RESET_BUF_SIZE;
 
@@ -49,19 +40,19 @@ const unsigned long int WARNING_PKG_SIZE = RESET_BUF_SIZE;
  */
 #define MAX_QUERY_PKG_SIZE 65535
 
-
 #define DEFAULT_BACKLOG 128
-#define CHECK_SIRIDB(ssocket)                                                  \
-sirinet_socket_t * ssocket = client->data;                                     \
-if (ssocket->siridb == NULL)                                                   \
-{                                                                              \
-    sirinet_pkg_t * package;                                                   \
-    package = sirinet_pkg_new(pkg->pid, 0, CPROTO_ERR_NOT_AUTHENTICATED, NULL);\
-    if (package != NULL)                                                       \
-    {                                                                          \
-        sirinet_pkg_send((uv_stream_t *) client, package);                     \
-    }                                                                          \
-    return;                                                                    \
+#define CHECK_SIRIDB(client__, siridb__)                                \
+siridb_t * siridb__ = (client__)->siridb;                               \
+if (siridb__ == NULL)                                                   \
+{                                                                       \
+    sirinet_pkg_t * package;                                            \
+    package = sirinet_pkg_new(                                          \
+        pkg->pid, 0, CPROTO_ERR_NOT_AUTHENTICATED, NULL);               \
+    if (package != NULL)                                                \
+    {                                                                   \
+        sirinet_pkg_send(client, package);                              \
+    }                                                                   \
+    return;                                                             \
 }
 
 static const int SERVER_RUNNING_REINDEXING =
@@ -69,45 +60,44 @@ static const int SERVER_RUNNING_REINDEXING =
 
 static uv_loop_t * loop = NULL;
 static struct sockaddr_storage client_addr;
-static uv_tcp_t client_server;
+static uv_tcp_t client_server_tcp;
+static uv_pipe_t client_server_pipe;
 
-static void on_data(uv_stream_t * client, sirinet_pkg_t * pkg);
-static void on_new_connection(uv_stream_t * server, int status);
-static void on_auth_request(uv_stream_t * client, sirinet_pkg_t * pkg);
-static void on_query(uv_stream_t * client, sirinet_pkg_t * pkg);
-static void on_insert(uv_stream_t * client, sirinet_pkg_t * pkg);
-static void on_ping(uv_stream_t * client, sirinet_pkg_t * pkg);
-static void on_info(uv_stream_t * client, sirinet_pkg_t * pkg);
-static void on_loaddb(uv_stream_t * client, sirinet_pkg_t * pkg);
+static void on_tcp_new_connection(uv_stream_t * server, int status);
+static void on_pipe_new_connection(uv_stream_t * server, int status);
+static void on_data(sirinet_stream_t * client, sirinet_pkg_t * pkg);
+static void on_stream_data(sirinet_stream_t * client, sirinet_pkg_t * pkg);
+static void on_auth_request(sirinet_stream_t * client, sirinet_pkg_t * pkg);
+static void on_query(sirinet_stream_t * client, sirinet_pkg_t * pkg);
+static void on_insert(sirinet_stream_t * client, sirinet_pkg_t * pkg);
+static void on_ping(sirinet_stream_t * client, sirinet_pkg_t * pkg);
+
 static void on_reqfile(
-        uv_stream_t * client,
+        sirinet_stream_t * client,
         sirinet_pkg_t * pkg,
         sirinet_clserver_getfile getfile);
-static void on_register_server(uv_stream_t * client, sirinet_pkg_t * pkg);
-static void on_req_admin(uv_stream_t * client, sirinet_pkg_t * pkg);
+static void on_register_server(sirinet_stream_t * client, sirinet_pkg_t * pkg);
+static void on_req_service(sirinet_stream_t * client, sirinet_pkg_t * pkg);
 static void CLSERVER_send_server_error(
         siridb_t * siridb,
-        uv_stream_t * stream,
+        sirinet_stream_t * client,
         sirinet_pkg_t * pkg);
 static void CLSERVER_send_pool_error(
-        uv_stream_t * stream,
+        sirinet_stream_t * client,
         sirinet_pkg_t * pkg);
-static int CLSERVER_on_info_cb(siridb_t * siridb, qp_packer_t * packer);
 static void CLSERVER_on_register_server_response(
-        slist_t * promises,
+        vec_t * promises,
         siridb_server_async_t * server_reg);
 
 #define POOL_ERR_MSG \
     "At least one pool has no server available to process the request"
 
-#define POOL_ERR_LEN 64  // exact length of POOL_ERR_MSG
+#define POOL_ERR_LEN 64  /* exact length of POOL_ERR_MSG  */
 
 
 int sirinet_clserver_init(siri_t * siri)
 {
-#if DEBUG
     assert (loop == NULL && siri->loop != NULL);
-#endif
 
     int rc;
     int ip_v6 = 0;  /* false */
@@ -116,10 +106,12 @@ int sirinet_clserver_init(siri_t * siri)
     /* bind loop to the given loop */
     loop = siri->loop;
 
-    uv_tcp_init(loop, &client_server);
+    uv_tcp_init(loop, &client_server_tcp);
+    uv_pipe_init(loop, &client_server_pipe, 0);
 
     /* make sure data is set to NULL so we later on can check this value. */
-    client_server.data = NULL;
+    client_server_tcp.data = NULL;
+    client_server_pipe.data = NULL;
 
     if (siri->cfg->bind_client_addr != NULL)
     {
@@ -155,90 +147,125 @@ int sirinet_clserver_init(siri_t * siri)
                 (struct sockaddr_in *) &client_addr);
     }
 
-    uv_tcp_bind(
-            &client_server,
+    rc = uv_tcp_bind(
+            &client_server_tcp,
             (const struct sockaddr *) &client_addr,
             (siri->cfg->ip_support == IP_SUPPORT_IPV6ONLY) ?
                     UV_TCP_IPV6ONLY : 0);
 
-    rc = uv_listen(
-            (uv_stream_t*) &client_server,
-            DEFAULT_BACKLOG,
-            on_new_connection);
-
     if (rc)
     {
-        log_error("Error listening client server: %s", uv_strerror(rc));
+        log_error("Error binding TCP client server: %s", uv_strerror(rc));
         return 1;
     }
 
-    log_info("Start listening for client connections on port %d",
+    rc = uv_listen(
+            (uv_stream_t *) &client_server_tcp,
+            DEFAULT_BACKLOG,
+            on_tcp_new_connection);
+
+    if (rc)
+    {
+        log_error("Error listening TCP client server: %s", uv_strerror(rc));
+        return 1;
+    }
+
+    log_info("Start listening for TCP client connections on port %d",
             siri->cfg->listen_client_port);
+
+    if (siri->cfg->pipe_support)
+    {
+        char * pipe_name = siri->cfg->pipe_client_name;
+
+        rc = uv_pipe_bind(&client_server_pipe, pipe_name);
+
+        if (rc)
+        {
+            log_error("Error binding pipe client server: %s", uv_strerror(rc));
+            return 1;
+        }
+
+        rc = uv_listen(
+                (uv_stream_t *) &client_server_pipe,
+                DEFAULT_BACKLOG,
+                on_pipe_new_connection);
+
+        if (rc)
+        {
+            log_error(
+                    "Error listening pipe client server: %s", uv_strerror(rc));
+            return 1;
+        }
+
+        log_info("Start listening for pipe client connections on '%s'",
+                pipe_name);
+    }
 
     return 0;
 }
 
-static void on_new_connection(uv_stream_t * server, int status)
+static void on_tcp_new_connection(uv_stream_t * server, int status)
 {
-    log_debug("Received a client connection request.");
+    log_debug("Received a TCP client connection request.");
 
     if (status < 0)
     {
-        log_error("Client connection error: %s", uv_strerror(status));
+        log_error("TCP client connection error: %s", uv_strerror(status));
         return;
     }
-    uv_tcp_t * client =
-            sirinet_socket_new(SOCKET_CLIENT, (on_data_cb_t) &on_data);
+    sirinet_stream_t * client = sirinet_stream_new(
+            STREAM_TCP_CLIENT, (on_data_cb_t) &on_stream_data);
 
     if (client != NULL)
     {
-        uv_tcp_init(loop, client);
+        uv_tcp_init(loop, (uv_tcp_t *) client->stream);
 
-        if (uv_accept(server, (uv_stream_t *) client) == 0)
+        if (uv_accept(server, client->stream) == 0)
         {
             uv_read_start(
-                    (uv_stream_t *) client,
-                    sirinet_socket_alloc_buffer,
-                    sirinet_socket_on_data);
+                    client->stream,
+                    sirinet_stream_alloc_buffer,
+                    sirinet_stream_on_data);
         }
         else
         {
-            sirinet_socket_decref(client);
+            sirinet_stream_decref(client);
         }
     }
 }
 
-static void on_data(uv_stream_t * client, sirinet_pkg_t * pkg)
+static void on_pipe_new_connection(uv_stream_t * server, int status)
 {
-    if (Logger.level == LOGGER_DEBUG)
-    {
-        char addr_port[ADDR_BUF_SZ];
-        if (sirinet_addr_and_port(addr_port, client) == 0)
-        {
-            log_debug(
-                    "Package received from client '%s' "
-                    "(pid: %" PRIu16 ", len: %" PRIu32 ", tp: %s)",
-                    addr_port,
-                    pkg->pid,
-                    pkg->len,
-                    sirinet_cproto_client_str(pkg->tp));
-        }
-    }
-    else if (pkg->len >= WARNING_PKG_SIZE)
-    {
-        char addr_port[ADDR_BUF_SZ];
-        if (sirinet_addr_and_port(addr_port, client) == 0)
-        {
-            log_warning(
-                    "Got a large package from '%s' (pid: %d, len: %d, tp: %s)."
-                    " A package size smaller than 1MB is recommended!",
-                    addr_port,
-                    pkg->pid,
-                    pkg->len,
-                    sirinet_cproto_client_str(pkg->tp));
-        }
-    }
+    log_debug("Received a pipe client connection request.");
 
+    if (status < 0)
+    {
+        log_error("Pipe client connection error: %s", uv_strerror(status));
+        return;
+    }
+    sirinet_stream_t * client = sirinet_stream_new(
+            STREAM_PIPE_CLIENT, (on_data_cb_t) &on_stream_data);
+
+    if (client != NULL)
+    {
+        uv_pipe_init(loop, (uv_pipe_t *) client->stream, 0);
+
+        if (uv_accept(server,client->stream) == 0)
+        {
+            uv_read_start(
+                    client->stream,
+                    sirinet_stream_alloc_buffer,
+                    sirinet_stream_on_data);
+        }
+        else
+        {
+            sirinet_stream_decref(client);
+        }
+    }
+}
+
+static void on_data(sirinet_stream_t * client, sirinet_pkg_t * pkg)
+{
     /* in case the online flag is not set, we cannot perform any request */
     if (siri.status == SIRI_STATUS_RUNNING)
     {
@@ -256,12 +283,6 @@ static void on_data(uv_stream_t * client, sirinet_pkg_t * pkg)
         case CPROTO_REQ_PING:
             on_ping(client, pkg);
             break;
-        case CPROTO_REQ_INFO:
-            on_info(client, pkg);
-            break;
-        case CPROTO_REQ_LOADDB:
-            on_loaddb(client, pkg);
-            break;
         case CPROTO_REQ_REGISTER_SERVER:
             on_register_server(client, pkg);
             break;
@@ -277,22 +298,55 @@ static void on_data(uv_stream_t * client, sirinet_pkg_t * pkg)
         case CPROTO_REQ_FILE_DATABASE:
             on_reqfile(client, pkg, siridb_get_file);
             break;
-        case CPROTO_REQ_ADMIN:
-            on_req_admin(client, pkg);
+        case CPROTO_REQ_SERVICE:
+            on_req_service(client, pkg);
             break;
         }
     }
     else
     {
-        /* data->siridb can be NULL here, make sure we can handle this state */
-        CLSERVER_send_server_error(
-                ((sirinet_socket_t *) client->data)->siridb,
-                client,
-                pkg);
+        /* siridb can be NULL here, make sure we can handle this state */
+        CLSERVER_send_server_error(client->siridb, client, pkg);
     }
 }
 
-static void on_auth_request(uv_stream_t * client, sirinet_pkg_t * pkg)
+static void on_stream_data(sirinet_stream_t * client, sirinet_pkg_t * pkg)
+{
+    if (Logger.level == LOGGER_DEBUG)
+    {
+        char * name = sirinet_stream_name(client);
+        if (name != NULL)
+        {
+            log_debug(
+                    "Package received from client '%s' "
+                    "(pid: %" PRIu16 ", len: %" PRIu32 ", tp: %s)",
+                    name,
+                    pkg->pid,
+                    pkg->len,
+                    sirinet_cproto_client_str(pkg->tp));
+            free(name);
+        }
+    }
+    else if (pkg->len >= WARNING_PKG_SIZE)
+    {
+        char * name = sirinet_stream_name(client);
+        if (name != NULL)
+        {
+            log_warning(
+                    "Got a large package from '%s' (pid: %d, len: %d, tp: %s)."
+                    " A package size smaller than 1MB is recommended!",
+                    name,
+                    pkg->pid,
+                    pkg->len,
+                    sirinet_cproto_client_str(pkg->tp));
+            free(name);
+        }
+    }
+
+    on_data(client, pkg);
+}
+
+static void on_auth_request(sirinet_stream_t * client, sirinet_pkg_t * pkg)
 {
     cproto_server_t rc;
     sirinet_pkg_t * package;
@@ -330,7 +384,7 @@ static void on_auth_request(uv_stream_t * client, sirinet_pkg_t * pkg)
  */
 static void CLSERVER_send_server_error(
         siridb_t * siridb,
-        uv_stream_t * stream,
+        sirinet_stream_t * client,
         sirinet_pkg_t * pkg)
 {
     /* WARNING: siridb can be NULL here */
@@ -364,7 +418,7 @@ static void CLSERVER_send_server_error(
         if (package != NULL)
         {
             /* ignore result code, signal can be raised */
-            sirinet_pkg_send(stream, package);
+            sirinet_pkg_send(client, package);
         }
         free(err_msg);
     }
@@ -374,7 +428,7 @@ static void CLSERVER_send_server_error(
  * A signal is raised in case an allocation error occurred.
  */
 static void CLSERVER_send_pool_error(
-        uv_stream_t * stream,
+        sirinet_stream_t * client,
         sirinet_pkg_t * pkg)
 {
     log_debug(POOL_ERR_MSG);
@@ -388,14 +442,14 @@ static void CLSERVER_send_pool_error(
     if (package != NULL)
     {
         /* ignore result code, signal can be raised */
-        sirinet_pkg_send(stream, package);
+        sirinet_pkg_send(client, package);
 
     }
 }
 
-static void on_query(uv_stream_t * client, sirinet_pkg_t * pkg)
+static void on_query(sirinet_stream_t * client, sirinet_pkg_t * pkg)
 {
-    CHECK_SIRIDB(ssocket)
+    CHECK_SIRIDB(client, siridb)
 
     if (pkg->len > MAX_QUERY_PKG_SIZE)
     {
@@ -415,7 +469,7 @@ static void on_query(uv_stream_t * client, sirinet_pkg_t * pkg)
 
         if (package != NULL)
         {
-            sirinet_pkg_send((uv_stream_t *) client, package);
+            sirinet_pkg_send(client, package);
         }
 
         return;
@@ -436,12 +490,12 @@ static void on_query(uv_stream_t * client, sirinet_pkg_t * pkg)
 
         if (qp_time_precision.tp == QP_INT64 &&
                 (tp = (siridb_timep_t) qp_time_precision.via.int64) !=
-                ssocket->siridb->time->precision)
+                siridb->time->precision)
         {
             tp %= SIRIDB_TIME_END;
         }
         factor = (tp == SIRIDB_TIME_DEFAULT) ? 0.0 :
-                pow(1000.0, tp - ssocket->siridb->time->precision);
+                pow(1000.0, tp - siridb->time->precision);
 
         siridb_query_run(
                 pkg->pid,
@@ -457,16 +511,16 @@ static void on_query(uv_stream_t * client, sirinet_pkg_t * pkg)
     }
 }
 
-static void on_insert(uv_stream_t * client, sirinet_pkg_t * pkg)
+static void on_insert(sirinet_stream_t * client, sirinet_pkg_t * pkg)
 {
-    CHECK_SIRIDB(ssocket)
+    CHECK_SIRIDB(client, siridb)
 
     char err_msg[SIRIDB_MAX_SIZE_ERR_MSG];
 
     if (!siridb_user_check_access(
-            (siridb_user_t *) ssocket->origin,
-            SIRIDB_ACCESS_INSERT,
-            err_msg))
+                (siridb_user_t *) client->origin,
+                SIRIDB_ACCESS_INSERT,
+                err_msg))
     {
         log_warning("(%s) %s",
                 sirinet_cproto_server_str(CPROTO_ERR_USER_ACCESS),
@@ -486,14 +540,12 @@ static void on_insert(uv_stream_t * client, sirinet_pkg_t * pkg)
         return;
     }
 
-    siridb_t * siridb = ssocket->siridb;
-
     /* only when when the flag is EXACTLY running or
      * running + re-indexing we can continue */
     if (    siridb->server->flags != SERVER_FLAG_RUNNING &&
             siridb->server->flags != SERVER_RUNNING_REINDEXING)
     {
-        CLSERVER_send_server_error(siridb, (uv_stream_t *) client, pkg);
+        CLSERVER_send_server_error(siridb, client, pkg);
         return;
     }
 
@@ -565,7 +617,7 @@ static void on_insert(uv_stream_t * client, sirinet_pkg_t * pkg)
     }
 }
 
-static void on_ping(uv_stream_t * client, sirinet_pkg_t * pkg)
+static void on_ping(sirinet_stream_t * client, sirinet_pkg_t * pkg)
 {
     sirinet_pkg_t * package;
     package = sirinet_pkg_new(pkg->pid, 0, CPROTO_RES_ACK, NULL);
@@ -577,93 +629,16 @@ static void on_ping(uv_stream_t * client, sirinet_pkg_t * pkg)
     }
 }
 
-static void on_info(uv_stream_t * client, sirinet_pkg_t * pkg)
-{
-    qp_packer_t * packer = sirinet_packer_new(128);
-    if (packer != NULL)
-    {
-        qp_add_type(packer, QP_ARRAY_OPEN);
-        qp_add_string(packer, SIRIDB_VERSION);
-        qp_add_type(packer, QP_ARRAY_OPEN);
-
-        if (!llist_walk(
-                siri.siridb_list,
-                (llist_cb) CLSERVER_on_info_cb,
-                packer))
-        {
-            sirinet_pkg_t * package = sirinet_packer2pkg(
-                    packer,
-                    pkg->pid,
-                    CPROTO_RES_INFO);
-
-            /* ignore result code, signal can be raised */
-            sirinet_pkg_send(client, package);
-        }
-        else
-        {
-            qp_packer_free(packer);
-        }
-    }
-}
-
-/*
- * This function can raise a SIGNAL.
- */
-static void on_loaddb(uv_stream_t * client, sirinet_pkg_t * pkg)
-{
-    qp_unpacker_t unpacker;
-    qp_unpacker_init(&unpacker, pkg->data, pkg->len);
-
-    qp_obj_t qp_dbpath;
-    if (qp_next(&unpacker, &qp_dbpath) == QP_RAW)
-    {
-        char * dbpath = strndup(
-                (const char *) qp_dbpath.via.raw, qp_dbpath.len);
-
-        if (dbpath == NULL)
-        {
-            ERR_ALLOC
-        }
-        else
-        {
-            siridb_t * siridb = siridb_new(dbpath, LOCK_QUIT_IF_EXIST);
-            if (siridb != NULL)
-            {
-                siridb->server->flags |= SERVER_FLAG_RUNNING;
-
-                /* Force one heart-beat */
-                siri_heartbeat_force();
-            }
-            sirinet_pkg_t * package = sirinet_pkg_new(
-                    pkg->pid,
-                    0,
-                    (siridb == NULL) ?
-                            CPROTO_ERR_LOADING_DB : CPROTO_RES_ACK,
-                    NULL);
-            if (package != NULL)
-            {
-                sirinet_pkg_send(client, package);
-            }
-            free(dbpath);
-        }
-    }
-    else
-    {
-        log_error("Incorrect package received: 'on_loaddb'");
-    }
-}
-
 /*
  * This function can raise a SIGNAL.
  */
 static void on_reqfile(
-        uv_stream_t * client,
+        sirinet_stream_t * client,
         sirinet_pkg_t * pkg,
         sirinet_clserver_getfile getfile)
 {
-    CHECK_SIRIDB(ssocket)
-
-    siridb_t * siridb = ssocket->siridb;
+    CHECK_SIRIDB(client, siridb)
+    siridb_user_t * user = client->origin;
     sirinet_pkg_t * package = NULL;
     char err_msg[SIRIDB_MAX_SIZE_ERR_MSG];
 
@@ -681,7 +656,7 @@ static void on_reqfile(
                 err_msg);
     }
     else if (!siridb_user_check_access(
-            (siridb_user_t *) ssocket->origin,
+            user,
             SIRIDB_ACCESS_PROFILE_FULL,
             err_msg))
     {
@@ -718,15 +693,15 @@ static void on_reqfile(
 /*
  * This function can raise a SIGNAL.
  */
-static void on_register_server(uv_stream_t * client, sirinet_pkg_t * pkg)
+static void on_register_server(sirinet_stream_t * client, sirinet_pkg_t * pkg)
 {
-    CHECK_SIRIDB(ssocket)
+    CHECK_SIRIDB(client, siridb)
+    siridb_user_t * user = client->origin;
 
-    siridb_t * siridb = ssocket->siridb;
     sirinet_pkg_t * package = NULL;
     siridb_server_t * new_server = NULL;
     char err_msg[SIRIDB_MAX_SIZE_ERR_MSG];
-    slist_t * servers = NULL;
+    vec_t * servers = NULL;
 
     if (siridb->server->flags != SERVER_FLAG_RUNNING)
     {
@@ -754,7 +729,7 @@ static void on_register_server(uv_stream_t * client, sirinet_pkg_t * pkg)
                 err_msg);
     }
     else if (!siridb_user_check_access(
-            (siridb_user_t *) ssocket->origin,
+            user,
             SIRIDB_ACCESS_PROFILE_FULL,
             err_msg))
     {
@@ -776,7 +751,7 @@ static void on_register_server(uv_stream_t * client, sirinet_pkg_t * pkg)
     else
     {
         /* make a copy of the current servers */
-        servers = siridb_servers_other2slist(siridb);
+        servers = siridb_servers_other2vec(siridb);
         if (servers == NULL)
         {
             sprintf(err_msg, "Memory allocation error.");
@@ -828,7 +803,7 @@ static void on_register_server(uv_stream_t * client, sirinet_pkg_t * pkg)
             if (servers != NULL && (package = sirinet_pkg_dup(pkg)) != NULL)
             {
                 /* make sure to decrement the client in the callback */
-                sirinet_socket_incref(client);
+                sirinet_stream_incref(client);
 
                 siridb_servers_send_pkg(
                         servers,
@@ -842,10 +817,10 @@ static void on_register_server(uv_stream_t * client, sirinet_pkg_t * pkg)
     }
 
     /* free the servers or NULL */
-    slist_free(servers);
+    vec_free(servers);
 }
 
-static void on_req_admin(uv_stream_t * client, sirinet_pkg_t * pkg)
+static void on_req_service(sirinet_stream_t * client, sirinet_pkg_t * pkg)
 {
     qp_unpacker_t unpacker;
     qp_packer_t * packer = NULL;
@@ -862,14 +837,14 @@ static void on_req_admin(uv_stream_t * client, sirinet_pkg_t * pkg)
             qp_next(&unpacker, &qp_password) == QP_RAW &&
             qp_next(&unpacker, &qp_request) == QP_INT64)
     {
-        tp = (siri_admin_account_check(
+        tp = (siri_service_account_check(
                 &siri,
                 &qp_username,
                 &qp_password,
                 err_msg)) ?
-            CPROTO_ERR_ADMIN
+            CPROTO_ERR_SERVICE
             :
-            siri_admin_request(
+            siri_service_request(
                     qp_request.via.int64,
                     &unpacker,
                     &qp_username,
@@ -880,33 +855,33 @@ static void on_req_admin(uv_stream_t * client, sirinet_pkg_t * pkg)
 
         package =
                 (tp == CPROTO_DEFERRED) ? NULL :
-                (tp == CPROTO_ERR_ADMIN) ? sirinet_pkg_err(
+                (tp == CPROTO_ERR_SERVICE) ? sirinet_pkg_err(
                         pkg->pid,
                         strlen(err_msg),
                         tp,
                         err_msg) :
-                (tp == CPROTO_ACK_ADMIN_DATA) ? sirinet_packer2pkg(
+                (tp == CPROTO_ACK_SERVICE_DATA) ? sirinet_packer2pkg(
                         packer,
                         pkg->pid,
                         tp) : sirinet_pkg_new(pkg->pid, 0, tp, NULL);
     }
     else
     {
-        log_error("Invalid administrative request received.");
+        log_error("Invalid service request received.");
         package = sirinet_pkg_new(
                 pkg->pid,
                 0,
-                CPROTO_ERR_ADMIN_INVALID_REQUEST,
+                CPROTO_ERR_SERVICE_INVALID_REQUEST,
                 NULL);
     }
     if (package != NULL)
     {
         switch (package->tp)
         {
-        case CPROTO_ERR_ADMIN_INVALID_REQUEST:
+        case CPROTO_ERR_SERVICE_INVALID_REQUEST:
             log_warning("Received an invalid manage request.");
             break;
-        case CPROTO_ERR_ADMIN:
+        case CPROTO_ERR_SERVICE:
             log_warning("Error handling manage request: %s", err_msg);
             break;
         }
@@ -917,19 +892,10 @@ static void on_req_admin(uv_stream_t * client, sirinet_pkg_t * pkg)
 }
 
 /*
- * Typedef: llist_cb
- * Returns 0 if successful or -1 and a SIGNAL is raised if not.
- */
-static int CLSERVER_on_info_cb(siridb_t * siridb, qp_packer_t * packer)
-{
-    return qp_add_string(packer, siridb->dbname);
-}
-
-/*
  * Typedef: sirinet_promises_cb
  */
 static void CLSERVER_on_register_server_response(
-        slist_t * promises,
+        vec_t * promises,
         siridb_server_async_t * server_reg)
 {
     if (promises != NULL)
@@ -938,8 +904,9 @@ static void CLSERVER_on_register_server_response(
         sirinet_promise_t * promise;
         size_t err_count = 0;
         char err_msg[SIRIDB_MAX_SIZE_ERR_MSG];
+        size_t i;
 
-        for (size_t i = 0; i < promises->len; i++)
+        for (i = 0; i < promises->len; i++)
         {
             promise = promises->data[i];
             if (promise == NULL)
@@ -987,9 +954,8 @@ static void CLSERVER_on_register_server_response(
     }
 
     /* decref the client */
-    sirinet_socket_decref(server_reg->client);
+    sirinet_stream_decref(server_reg->client);
 
     /* free server register object */
     free(server_reg);
 }
-

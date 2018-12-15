@@ -9,6 +9,8 @@ SiriDB is a highly-scalable, robust and super fast time series database.
       * [Linux](#linux)
       * [OSX](#osx)
       * [Configuration](#configuration)
+    * [Build Debian package](#build-debian-package)
+    * [Run integration tests](#run-integration-tests)
   * [Create or expand a database](#create-or-expand-a-database)
   * [Using SiriDB](#using-siridb)
     * [SiriDB Connectors](#siridb-connectors)
@@ -16,40 +18,49 @@ SiriDB is a highly-scalable, robust and super fast time series database.
     * [SiriDB Prompt](#siridb-prompt)
     * [Grafana](#grafana)
   * [API/Query language](#query-language)
-  
+
 ---------------------------------------
 
 ## Installation
 ### Ubuntu
 For Ubuntu we have a deb package available which can be downloaded [here](https://github.com/SiriDB/siridb-server/releases/latest).
 
-Note: SiriDB requires *libexpat1*, *libuv1* and *libpcre2-8-0*, these libraries can be easily installed using apt:
+Note: SiriDB requires *libexpat1*, *libuv1*, *libpcre2-8-0* and *libcleri0* these libraries can be easily installed using apt:
 ```
-apt install libexpat1 libuv1 libpcre2-8-0
+apt install libexpat1 libuv1 libpcre2-8-0 libcleri0
 ```
+
+>Library `libcleri0` is available from Ubuntu 18.04, for older versions a deb package can be found here:
+>https://github.com/transceptor-technology/libcleri/releases/latest
 
 The .deb package installs a configuration file at `/etc/siridb/siridb.conf`. You might want to view or change this file before starting SiriDB.
 
 ### Compile from source
 >From version 2.0.19 libcleri is not included as part of this source anymore
->and needs to be installed separately. libcleri can be found here: 
+>and needs to be installed separately. libcleri can be found here:
 >[https://github.com/transceptor-technology/libcleri](https://github.com/transceptor-technology/libcleri)
+>or can be installed using `apt`.
 
 #### Linux
-Install the following requirements: (Ubuntu)
+Install the following requirements: (Ubuntu 18.04)
 ```
+sudo apt install libcleri-dev
 sudo apt install libpcre2-dev
-sudo apt install libuv1-dev 
-sudo apt install uuid-dev 
+sudo apt install libuv1-dev
+sudo apt install uuid-dev
 ```
 
 Compile (replace Release with Debug for a debug build):
 ```
 cd ./Release
 make clean
+make test
 make
-```	
+```
+
 #### OSX
+>Make sure [libcleri](https://github.com/transceptor-technology/libcleri) is installed!
+
 Install the following requirements:
 ```
 brew install pcre2
@@ -57,28 +68,64 @@ brew install libuv
 brew install ossp-uuid
 ```
 Compile (replace Release with Debug for a debug build):
-```    
+```
 cd ./Release
 export CFLAGS="-I/usr/local/include"
 export LDFLAGS="-L/usr/local/lib"
 make clean
+make test
 make
 ```
+
 #### Configuration
 SiriDB requires a configuration file to run. By default SiriDB will search for the configuration file in `/etc/siridb/siridb.conf` but alternatively you can specify a custom path by using the `-c/--config` argument.
 
 ```
 $ siridb-server -c /my/path/siridb.conf
 ```
-
 An example configuration file can be found here:
 [https://github.com/SiriDB/siridb-server/blob/master/siridb.conf](https://github.com/SiriDB/siridb-server/blob/master/siridb.conf)
+
+### Build Debian package:
+
+Install required packages (*autopkgtest is required for running the tests*)
+```
+apt-get install devscripts lintian help2man autopkgtest
+```
+
+Create archive
+```
+git archive -o ../siridb-server_2.0.30.orig.tar.gz master
+```
+
+Run tests
+```
+autopkgtest -B -- null
+```
+
+Build package
+```
+debuild -us -uc
+```
+
+## Run integration tests
+The simplest way to run the integration tests is to use [docker](https://docs.docker.com/install/).
+
+Build integration test image
+```
+docker build -t siridb/itest -f itest/Dockerfile .
+```
+
+Run integration tests
+```
+docker run siridb/itest:latest
+```
 
 ## Create or expand a database
 [SiriDB Admin](https://github.com/SiriDB/siridb-admin) is required for creating a new database or expanding an existing database with a new server. Documentation on how to install and use the admin tool can be found at the [siridb-admin](https://github.com/SiriDB/siridb-admin#readme) github project. Binaries are available for most platforms and can be downloaded from [here](https://github.com/SiriDB/siridb-admin/releases/latest).
 
 ## Using SiriDB
-SiriDB has several tools available to connect to a SiriDB database. 
+SiriDB has several tools available to connect to a SiriDB database.
 
 ### SiriDB Connectors
 The following native connectors are available:
@@ -86,7 +133,7 @@ The following native connectors are available:
  - [Python](https://github.com/SiriDB/siridb-connector#readme)
  - [Go](https://github.com/SiriDB/go-siridb-connector#readme)
  - [Node.js](https://github.com/SiriDB/siridb-nodejs-addon#readme)
- 
+
 When not using one of the above, you can still communicate to SiriDB using [SiriDB HTTP](#siridb-http).
 
 ### SiriDB HTTP
@@ -99,4 +146,4 @@ When not using one of the above, you can still communicate to SiriDB using [Siri
 [SiriDB Grafana Datasource](https://github.com/SiriDB/grafana-siridb-http-datasource#readme) is a plugin for Grafana. See the following blog article on how to configure and use this plugin: https://github.com/SiriDB/grafana-siridb-http-example.
 
 ## Query language
-Documentation about the query language can be found at http://siridb.net/docs.
+Documentation about the query language can be found at https://siridb.net/documentation.

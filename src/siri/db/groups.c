@@ -1,13 +1,6 @@
 /*
  * groups.c - Groups (saved regular expressions).
  *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 16-08-2016
- *
  * Info groups->mutex:
  *
  *  Main thread:
@@ -40,15 +33,15 @@
 #include <siri/err.h>
 #include <siri/net/protocol.h>
 #include <siri/siri.h>
-#include <slist/slist.h>
+#include <vec/vec.h>
 #include <stdlib.h>
 #include <unistd.h>
 #include <xpath/xpath.h>
 
 #define SIRIDB_GROUPS_SCHEMA 1
 #define SIRIDB_GROUPS_FN "groups.dat"
-#define GROUPS_LOOP_SLEEP 2  // 2 seconds
-#define GROUPS_LOOP_DEEP 15  // x times -> 30 seconds (used when re-indexing)
+#define GROUPS_LOOP_SLEEP 2  /* 2 seconds  */
+#define GROUPS_LOOP_DEEP 15  /* x times -> 30 seconds. used when re-indexing */
 #define GROUPS_RE_BATCH_SZ 1000
 #define CALC_BATCH_SIZE(sz) GROUPS_RE_BATCH_SZ /((sz / 5 ) + 1) + 1;
 
@@ -61,7 +54,7 @@ static void GROUPS_loop_finish(uv_work_t * work, int status);
 static int GROUPS_write(siridb_group_t * group, qp_fpacker_t * fpacker);
 static void GROUPS_init_groups(siridb_t * siridb);
 static void GROUPS_init_series(siridb_t * siridb);
-static int GROUPS_2slist(siridb_group_t * group, slist_t * groups_list);
+static int GROUPS_2vec(siridb_group_t * group, vec_t * groups_list);
 static void GROUPS_cleanup(siridb_groups_t * groups);
 /*
  * In case of an error the return value is NULL and a SIGNAL is raised.
@@ -78,11 +71,11 @@ siridb_groups_t * siridb_groups_new(siridb_t * siridb)
     }
     else
     {
-        groups->ref = 2;  // for the main thread and for the groups thread
+        groups->ref = 2;  /* for the main thread and for the groups thread  */
         groups->fn = NULL;
         groups->groups = ct_new();
-        groups->nseries = slist_new(SLIST_DEFAULT_SIZE);
-        groups->ngroups = slist_new(SLIST_DEFAULT_SIZE);
+        groups->nseries = vec_new(VEC_DEFAULT_SIZE);
+        groups->ngroups = vec_new(VEC_DEFAULT_SIZE);
         uv_mutex_init(&groups->mutex);
         groups->work.data = (siridb_t *) siridb;
 
@@ -136,7 +129,7 @@ int siridb_groups_add_series(
 
     uv_mutex_lock(&groups->mutex);
 
-    if (slist_append_safe(&groups->nseries, series) == 0)
+    if (vec_append_safe(&groups->nseries, series) == 0)
     {
         siridb_series_incref(series);
     }
@@ -201,7 +194,7 @@ int siridb_groups_add_group(
         break;
 
     case CT_OK:
-        if (slist_append_safe(&groups->ngroups, group))
+        if (vec_append_safe(&groups->ngroups, group))
         {
             siridb_group_decref(group);
             sprintf(err_msg, "Memory allocation error.");
@@ -376,20 +369,18 @@ static int GROUPS_nseries(
 
 static void GROUPS_free(siridb_groups_t * groups)
 {
-#if DEBUG
-    log_debug("Free groups");
-#endif
+    size_t i;
     free(groups->fn);
 
     if (groups->nseries != NULL)
     {
         siridb_series_t * series;
-        for (size_t i = 0; i < groups->nseries->len; i++)
+        for (i = 0; i < groups->nseries->len; i++)
         {
             series = (siridb_series_t *) groups->nseries->data[i];
             siridb_series_decref(series);
         }
-        slist_free(groups->nseries);
+        vec_free(groups->nseries);
     }
 
     if (groups->groups != NULL)
@@ -400,12 +391,12 @@ static void GROUPS_free(siridb_groups_t * groups)
     if (groups->ngroups != NULL)
     {
         siridb_group_t * group;
-        for (size_t i = 0; i < groups->ngroups->len; i++)
+        for (i = 0; i < groups->ngroups->len; i++)
         {
             group = (siridb_group_t *) groups->ngroups->data[i];
             siridb_group_decref(group);
         }
-        slist_free(groups->ngroups);
+        vec_free(groups->ngroups);
     }
 
     uv_mutex_destroy(&groups->mutex);
@@ -416,10 +407,10 @@ static void GROUPS_free(siridb_groups_t * groups)
 /*
  * Group thread.
  */
-static int GROUPS_2slist(siridb_group_t * group, slist_t * groups_list)
+static int GROUPS_2vec(siridb_group_t * group, vec_t * groups_list)
 {
     siridb_group_incref(group);
-    slist_append(groups_list, group);
+    vec_append(groups_list, group);
     return 0;
 }
 
@@ -563,7 +554,7 @@ static void GROUPS_init_series(siridb_t * siridb)
 
     while (groups->nseries->len)
     {
-        series = (siridb_series_t *) slist_pop(groups->nseries);
+        series = (siridb_series_t *) vec_pop(groups->nseries);
 
         if (~series->flags & SIRIDB_SERIES_IS_DROPPED)
         {
@@ -579,7 +570,7 @@ static void GROUPS_init_series(siridb_t * siridb)
         {
             uv_mutex_unlock(&groups->mutex);
 
-            usleep(10000);  // 10ms
+            usleep(10000);  /* 10ms  */
 
             uv_mutex_lock(&groups->mutex);
 
@@ -596,20 +587,19 @@ static void GROUPS_init_series(siridb_t * siridb)
  */
 static void GROUPS_init_groups(siridb_t * siridb)
 {
-#if DEBUG
-    /* do not run this function when no groups need initialization */
-    assert (siridb->groups->ngroups->len);
-#endif
-
     siridb_groups_t * groups = siridb->groups;
     siridb_group_t * group;
-
-    slist_t * series_list;
+    vec_t * series_list;
     siridb_series_t * series;
+    size_t i;
+
+    /* do not run this function when no groups need initialization */
+    assert (siridb->groups->ngroups->len);
+
     uv_mutex_lock(&siridb->series_mutex);
 
     series_list = (groups->nseries->len) ?
-            NULL : imap_2slist_ref(siridb->series_map);
+            NULL : imap_2vec_ref(siridb->series_map);
 
     uv_mutex_unlock(&siridb->series_mutex);
 
@@ -623,19 +613,17 @@ static void GROUPS_init_groups(siridb_t * siridb)
 
     while (groups->ngroups->len)
     {
-        group = (siridb_group_t *) slist_pop(groups->ngroups);
+        group = (siridb_group_t *) vec_pop(groups->ngroups);
 
-#if DEBUG
         /* we must be sure this group is empty */
         assert (group->series->len == 0);
-#endif
 
         if (~group->flags & GROUP_FLAG_DROPPED)
         {
             /* remove INIT flag from group */
             group->flags &= ~GROUP_FLAG_INIT;
 
-            for (size_t i = 0; i < series_list->len; i++)
+            for (i = 0; i < series_list->len; i++)
             {
                 series = (siridb_series_t *) series_list->data[i];
 
@@ -645,7 +633,7 @@ static void GROUPS_init_groups(siridb_t * siridb)
                 {
                     uv_mutex_unlock(&groups->mutex);
 
-                    usleep(10000);  // 10ms
+                    usleep(10000);  /* 10ms  */
 
                     uv_mutex_lock(&groups->mutex);
                 }
@@ -656,20 +644,20 @@ static void GROUPS_init_groups(siridb_t * siridb)
 
         uv_mutex_unlock(&groups->mutex);
 
-        usleep(10000);  // 10ms
+        usleep(10000);  /* 10ms  */
 
         uv_mutex_lock(&groups->mutex);
     }
 
     uv_mutex_unlock(&groups->mutex);
 
-    for (size_t i = 0; i < series_list->len; i++)
+    for (i = 0; i < series_list->len; i++)
     {
         series = (siridb_series_t *) series_list->data[i];
         siridb_series_decref(series);
     }
 
-    slist_free(series_list);
+    vec_free(series_list);
 }
 
 /*
@@ -681,11 +669,11 @@ static void GROUPS_cleanup(siridb_groups_t * groups)
 
     groups->flags &= ~GROUPS_FLAG_DROPPED_SERIES;
 
-    slist_t * groups_list = slist_new(groups->groups->len);
+    vec_t * groups_list = vec_new(groups->groups->len);
 
     if (groups_list != NULL)
     {
-        ct_values(groups->groups, (ct_val_cb) GROUPS_2slist, groups_list);
+        ct_values(groups->groups, (ct_val_cb) GROUPS_2vec, groups_list);
     }
 
     uv_mutex_unlock(&groups->mutex);
@@ -701,7 +689,7 @@ static void GROUPS_cleanup(siridb_groups_t * groups)
 
     while (groups_list->len)
     {
-        group = (siridb_group_t *) slist_pop(groups_list);
+        group = (siridb_group_t *) vec_pop(groups_list);
 
         if (!group->flags)
         {
@@ -714,8 +702,8 @@ static void GROUPS_cleanup(siridb_groups_t * groups)
 
         siridb_group_decref(group);
 
-        usleep(10000);  // 10ms
+        usleep(10000);  /* 10ms  */
     }
 
-    slist_free(groups_list);
+    vec_free(groups_list);
 }

@@ -6,6 +6,7 @@
 C_SRCS += \
 ../src/siri/async.c \
 ../src/siri/backup.c \
+../src/siri/buffersync.c \
 ../src/siri/err.c \
 ../src/siri/heartbeat.c \
 ../src/siri/optimize.c \
@@ -15,6 +16,7 @@ C_SRCS += \
 OBJS += \
 ./src/siri/async.o \
 ./src/siri/backup.o \
+./src/siri/buffersync.o \
 ./src/siri/err.o \
 ./src/siri/heartbeat.o \
 ./src/siri/optimize.o \
@@ -24,6 +26,7 @@ OBJS += \
 C_DEPS += \
 ./src/siri/async.d \
 ./src/siri/backup.d \
+./src/siri/buffersync.d \
 ./src/siri/err.d \
 ./src/siri/heartbeat.d \
 ./src/siri/optimize.d \
@@ -35,7 +38,7 @@ C_DEPS += \
 src/siri/%.o: ../src/siri/%.c
 	@echo 'Building file: $<'
 	@echo 'Invoking: GCC C Compiler'
-	gcc -I../include -O3 -Wall -Wextra $(CPPFLAGS) $(CFLAGS) -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
+	gcc -DNDEBUG -I../include -O3 -Wall -Wextra $(CPPFLAGS) $(CFLAGS) -c -fmessage-length=0 -MMD -MP -MF"$(@:%.o=%.d)" -MT"$(@)" -o "$@" "$<"
 	@echo 'Finished building: $<'
 	@echo ' '
 

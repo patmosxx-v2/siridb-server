@@ -1,12 +1,19 @@
-#pragma once
+/*
+ * args.h - Parse SiriDB command line arguments.
+ */
+#ifndef SIRI_ARGS_H_
+#define SIRI_ARGS_H_
+
+typedef struct siri_args_s siri_args_t;
 
 #include <inttypes.h>
 #include <argparse/argparse.h>
 #include <siri/siri.h>
 
-typedef struct siri_s siri_t;
+/* arguments are configured and parsed here */
+void siri_args_parse(siri_t * siri, int argc, char *argv[]);
 
-typedef struct siri_args_s
+struct siri_args_s
 {
     /* true/false props */
     int32_t version;
@@ -15,7 +22,6 @@ typedef struct siri_args_s
     /* string props */
     char config[ARGPARSE_MAX_LEN_ARG];
     char log_level[ARGPARSE_MAX_LEN_ARG];
-} siri_args_t;
+};
 
-/* arguments are configured and parsed here */
-void siri_args_parse(siri_t * siri, int argc, char *argv[]);
+#endif  /* SIRI_ARGS_H_ */

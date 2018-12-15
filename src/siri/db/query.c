@@ -1,13 +1,5 @@
 /*
  * query.c - Responsible for parsing queries.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 10-03-2016
- *
  */
 #include <assert.h>
 #include <cleri/cleri.h>
@@ -21,25 +13,21 @@
 #include <siri/db/servers.h>
 #include <siri/db/time.h>
 #include <siri/db/walker.h>
+#include <siri/db/listener.h>
+#include <siri/db/queries.h>
 #include <siri/net/clserver.h>
 #include <siri/net/pkg.h>
-#include <siri/net/socket.h>
-#include <siri/parser/listener.h>
-#include <siri/parser/queries.h>
+#include <siri/net/clserver.h>
 #include <siri/siri.h>
-#include <strextra/strextra.h>
+#include <xstr/xstr.h>
 #include <string.h>
 #include <sys/time.h>
 #include <siri/err.h>
 
-#if DEBUG
-#include <motd/motd.h>
-#endif
-
 #define QUERY_TOO_LONG -1
 #define QUERY_MAX_LENGTH 8192
 #define QUERY_EXTRA_ALLOC_SIZE 200
-#define SIRIDB_FWD_SERVERS_TIMEOUT 5000  // 5 seconds
+#define SIRIDB_FWD_SERVERS_TIMEOUT 5000  /* 5 seconds  */
 
 static void QUERY_send_invalid_error(uv_async_t * handle);
 static void QUERY_parse(uv_async_t * handle);
@@ -64,13 +52,12 @@ static void QUERY_send_no_query(uv_async_t * handle);
  */
 void siridb_query_run(
         uint16_t pid,
-        uv_stream_t * client,
+        sirinet_stream_t * client,
         const char * q,
         size_t q_len,
         float factor,
         int flags)
 {
-    siridb_t * siridb;
     uv_async_t * handle = (uv_async_t *) malloc(sizeof(uv_async_t));
     if (handle == NULL)
     {
@@ -104,7 +91,7 @@ void siridb_query_run(
     query->pid = pid;
 
     /* increment client reference counter */
-    sirinet_socket_incref(client);
+    sirinet_stream_incref(client);
 
     query->client = client;
     query->flags = flags;
@@ -133,8 +120,7 @@ void siridb_query_run(
     }
 
     /* increment active tasks */
-    siridb = ((sirinet_socket_t *) query->client->data)->siridb;
-    siridb_tasks_inc(siridb->tasks);
+    siridb_tasks_inc(client->siridb->tasks);
 
     /* send next call */
     uv_async_init(siri.loop, handle, (uv_async_cb) QUERY_parse);
@@ -145,7 +131,7 @@ void siridb_query_run(
 void siridb_query_free(uv_handle_t * handle)
 {
     siridb_query_t * query = (siridb_query_t *) handle->data;
-    siridb_t * siridb = ((sirinet_socket_t *) query->client->data)->siridb;
+    siridb_t * siridb = query->client->siridb;
 
     /* decrement active tasks */
     siridb_tasks_dec(siridb->tasks);
@@ -174,17 +160,13 @@ void siridb_query_free(uv_handle_t * handle)
     }
 
     /* decrement client reference counter */
-    sirinet_socket_decref(query->client);
+    sirinet_stream_decref(query->client);
 
     /* free query */
     free(query);
 
     /* free handle */
     free(handle);
-
-    #if DEBUG
-    log_debug("Free query!, hooray!");
-    #endif
 }
 
 void siridb_send_query_result(uv_async_t * handle)
@@ -194,19 +176,15 @@ void siridb_send_query_result(uv_async_t * handle)
      * clean everything without sending things in case of a client failure
      */
     siridb_query_t * query = (siridb_query_t *) handle->data;
-#if DEBUG
-    if (query->packer == NULL)
-    {
-        sprintf(query->err_msg, "CRITICAL: We have nothing to send!");
-        return siridb_query_send_error(handle, CPROTO_ERR_QUERY);
-    }
-#endif
+
+    assert (query->packer != NULL);
+
     sirinet_pkg_t * pkg = sirinet_packer2pkg(
             query->packer,
             query->pid,
             CPROTO_RES_QUERY);
 
-    sirinet_pkg_send((uv_stream_t *) query->client, pkg);
+    sirinet_pkg_send(query->client, pkg);
 
     query->packer = NULL;
 
@@ -224,7 +202,7 @@ void siridb_query_send_error(
     sirinet_pkg_t * package = sirinet_pkg_err(
                 query->pid,
                 strlen(query->err_msg),
-                err,  // usually this is CPROTO_ERR_QUERY, CPROTO_ERR_POOL etc.
+                err,  /* usually this is CPROTO_ERR_QUERY, CPROTO_ERR_POOL...*/
                 query->err_msg);
 
     log_warning("(%s) %s", sirinet_cproto_server_str(err), query->err_msg);
@@ -232,7 +210,7 @@ void siridb_query_send_error(
     if (package != NULL)
     {
         /* ignore result code, signal can be raised */
-        sirinet_pkg_send((uv_stream_t *) query->client, package);
+        sirinet_pkg_send(query->client, package);
     }
     uv_close((uv_handle_t *) handle, siri_async_close);
 }
@@ -252,7 +230,7 @@ void siridb_query_forward(
         int flags)
 {
     siridb_query_t * query = (siridb_query_t *) handle->data;
-    siridb_t * siridb = ((sirinet_socket_t *) query->client->data)->siridb;
+    siridb_t * siridb = query->client->siridb;
 
     /*
      * the size is important here, we will use the alloc_size to guess the
@@ -290,7 +268,7 @@ void siridb_query_forward(
         case SIRIDB_QUERY_FWD_SERVERS:
             pkg->tp = BPROTO_QUERY_SERVER;
             {
-                slist_t * servers = siridb_servers_other2slist(siridb);
+                vec_t * servers = siridb_servers_other2vec(siridb);
                 if (servers != NULL)
                 {
                     siridb_servers_send_pkg(
@@ -299,7 +277,7 @@ void siridb_query_forward(
                             SIRIDB_FWD_SERVERS_TIMEOUT,
                             cb,
                             handle);
-                    slist_free(servers);
+                    vec_free(servers);
                 }
                 else
                 {
@@ -321,20 +299,17 @@ void siridb_query_forward(
             break;
 
         case SIRIDB_QUERY_FWD_SOME_POOLS:
-#if DEBUG
-
             assert (((query_select_t *) ((siridb_query_t *)
                     handle->data)->data)->tp == QUERIES_SELECT);
             assert (((query_select_t *) ((siridb_query_t *)
                     handle->data)->data)->pmap != NULL);
-#endif
             pkg->tp = BPROTO_QUERY_SERVER;
             {
-                slist_t * borrow_list = imap_slist(((query_select_t *) (
+                vec_t * borrow_list = imap_vec(((query_select_t *) (
                         (siridb_query_t *) handle->data)->data)->pmap);
                 if (borrow_list != NULL)
                 {
-                    /* if slist is NULL, a signal is raised */
+                    /* if vec is NULL, a signal is raised */
                     siridb_pools_send_pkg_2some(
                             borrow_list,
                             pkg,
@@ -390,7 +365,7 @@ int siridb_query_err_from_pkg(siridb_query_t * query, sirinet_pkg_t * pkg)
     qp_unpacker_init(&unpacker, pkg->data, pkg->len);
 
     if (qp_is_map(qp_next(&unpacker, NULL)) &&
-        qp_is_raw(qp_next(&unpacker, NULL)) && // error_msg
+        qp_is_raw(qp_next(&unpacker, NULL)) && /* error_msg  */
         qp_is_raw(qp_next(&unpacker, &qp_err)) &&
         qp_err.len < SIRIDB_MAX_SIZE_ERR_MSG)
     {
@@ -407,9 +382,7 @@ void siridb_query_timeit_from_unpacker(
         siridb_query_t * query,
         qp_unpacker_t * unpacker)
 {
-#if DEBUG
     assert (query->timeit != NULL);
-#endif
 
     qp_types_t tp = qp_next(unpacker, NULL);
 
@@ -532,9 +505,8 @@ static void QUERY_send_no_query(uv_async_t * handle)
     query->packer = sirinet_packer_new(512);
     qp_add_type(query->packer, QP_MAP1);
 
-#ifndef DEBUG
-    /* production version returns timestamp now */
-    siridb_t * siridb = ((sirinet_socket_t *) query->client->data)->siridb;
+    siridb_t * siridb = query->client->siridb;
+
     qp_add_raw(query->packer, (const unsigned char *) "calc", 4);
     uint64_t ts = siridb_time_now(siridb, query->start);
 
@@ -548,15 +520,6 @@ static void QUERY_send_no_query(uv_async_t * handle)
         qp_add_int64(query->packer, (int64_t) (ts * factor));
     }
 
-#else
-    /* development release returns motd */
-    const char * msg;
-    msg = motd_get_random_msg();
-    qp_add_raw(query->packer, (const unsigned char *) "motd", 4);
-    qp_add_string(query->packer, msg);
-
-
-#endif
     siridb_send_query_result(handle);
 }
 
@@ -564,7 +527,8 @@ static void QUERY_parse(uv_async_t * handle)
 {
     int rc;
     siridb_query_t * query = (siridb_query_t *) handle->data;
-    siridb_t * siridb = ((sirinet_socket_t *) query->client->data)->siridb;
+    siridb_t * siridb = query->client->siridb;
+
     siridb_walker_t * walker = siridb_walker_new(
             siridb,
             siridb_time_now(siridb, query->start),
@@ -653,9 +617,10 @@ static int QUERY_to_packer(qp_packer_t * packer, siridb_query_t * query)
         /* reserve 200 extra chars */
         char buffer[packer->alloc_size];
         size_t size = packer->alloc_size;
+        siridb_t * siridb = query->client->siridb;
 
         rc = QUERY_rebuild(
-                ((sirinet_socket_t *) query->client->data)->siridb,
+                siridb,
                 query->pr->tree->children->node,
                 buffer,
                 &size,
@@ -697,12 +662,12 @@ static int QUERY_walk(cleri_node_t * node, siridb_walker_t * walker)
      */
     if (gid != CLERI_NONE)
     {
-        if (    (func = siriparser_listen_enter[gid]) != NULL &&
+        if (    (func = siridb_listen_enter[gid]) != NULL &&
                 siridb_walker_append(walker, node, func))
         {
             return EXPR_MEM_ALLOC_ERR;
         }
-        if (    (func = siriparser_listen_exit[gid]) != NULL &&
+        if (    (func = siridb_listen_exit[gid]) != NULL &&
                 siridb_walker_insert(walker, node, func))
         {
             return EXPR_MEM_ALLOC_ERR;
@@ -855,7 +820,7 @@ static int QUERY_time_expr(
             char datestr[node->len - 1];
 
             /* extract date string */
-            strx_extract_string(datestr, node->str, node->len);
+            xstr_extract_string(datestr, node->str, node->len);
 
             /* get timestamp from date string */
             int64_t ts = iso8601_parse_date(datestr, walker->siridb->tz);

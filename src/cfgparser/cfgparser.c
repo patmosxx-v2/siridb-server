@@ -1,20 +1,12 @@
 /*
- * cfgparser.c - module for reading (and later writing) to INI style files.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 08-03-2016
- *
+ * cfgparser.c - Reading (and later writing) to INI style files.
  */
 #include <cfgparser/cfgparser.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
 #include <ctype.h>
-#include <strextra/strextra.h>
+#include <xstr/xstr.h>
 #include <siri/err.h>
 
 static void cfgparser_free_sections(cfgparser_section_t * root);
@@ -23,8 +15,8 @@ static cfgparser_option_t * cfgparser_new_option(
         cfgparser_section_t * section,
         const char * name,
         cfgparser_tp_t tp,
-        cfgparser_u * val,
-        cfgparser_u * def);
+        cfgparser_via_t * val,
+        cfgparser_via_t * def);
 
 #define MAXLINE 255
 
@@ -60,7 +52,7 @@ cfgparser_return_t cfgparser_read(cfgparser_t * cfgparser, const char * fn)
         pt = line;
 
         /* trims all whitespace */
-        strx_trim(&pt, 0);
+        xstr_trim(&pt, 0);
 
         if (*pt == '#' || *pt == 0)
         {
@@ -69,8 +61,8 @@ cfgparser_return_t cfgparser_read(cfgparser_t * cfgparser, const char * fn)
 
         if (*pt == '[' && pt[strlen(pt) - 1] == ']')
         {
-            strx_trim(&pt, '[');
-            strx_trim(&pt, ']');
+            xstr_trim(&pt, '[');
+            xstr_trim(&pt, ']');
             section = cfgparser_section(cfgparser, pt);
             if (section == NULL)
             {
@@ -111,11 +103,11 @@ cfgparser_return_t cfgparser_read(cfgparser_t * cfgparser, const char * fn)
         }
 
 
-        if (strx_is_int(pt))
+        if (xstr_is_int(pt))
         {
             option = cfgparser_integer_option(section, name, atoi(pt), 0);
         }
-        else if (strx_is_float(pt))
+        else if (xstr_is_float(pt))
         {
             sscanf(pt, "%lf", &d);
             option = cfgparser_real_option(section, name, d, 0.0f);
@@ -242,8 +234,8 @@ cfgparser_option_t * cfgparser_string_option(
         const char * val,
         const char * def)
 {
-    cfgparser_u * val_u = (cfgparser_u *) malloc(sizeof(cfgparser_u));
-    cfgparser_u * def_u = (cfgparser_u *) malloc(sizeof(cfgparser_u));
+    cfgparser_via_t * val_u = (cfgparser_via_t *) malloc(sizeof(cfgparser_via_t));
+    cfgparser_via_t * def_u = (cfgparser_via_t *) malloc(sizeof(cfgparser_via_t));
 
     if (val_u == NULL || def_u == NULL)
     {
@@ -286,8 +278,8 @@ cfgparser_option_t * cfgparser_integer_option(
         int32_t val,
         int32_t def)
 {
-    cfgparser_u * val_u = (cfgparser_u *) malloc(sizeof(cfgparser_u));
-    cfgparser_u * def_u = (cfgparser_u *) malloc(sizeof(cfgparser_u));
+    cfgparser_via_t * val_u = (cfgparser_via_t *) malloc(sizeof(cfgparser_via_t));
+    cfgparser_via_t * def_u = (cfgparser_via_t *) malloc(sizeof(cfgparser_via_t));
     if (val_u == NULL || def_u == NULL)
     {
         ERR_ALLOC
@@ -317,8 +309,8 @@ cfgparser_option_t * cfgparser_real_option(
         double val,
         double def)
 {
-    cfgparser_u * val_u = (cfgparser_u *) malloc(sizeof(cfgparser_u));
-    cfgparser_u * def_u = (cfgparser_u *) malloc(sizeof(cfgparser_u));
+    cfgparser_via_t * val_u = (cfgparser_via_t *) malloc(sizeof(cfgparser_via_t));
+    cfgparser_via_t * def_u = (cfgparser_via_t *) malloc(sizeof(cfgparser_via_t));
     if (val_u == NULL || def_u == NULL)
     {
         ERR_ALLOC
@@ -344,19 +336,19 @@ const char * cfgparser_errmsg(cfgparser_return_t err)
     switch (err)
     {
     case CFGPARSER_SUCCESS:
-        return "success: configuration file parsed successfully";
+        return "configuration file parsed successfully";
     case CFGPARSER_ERR_READING_FILE:
-        return "error: cannot open file for reading";
+        return "cannot open file for reading";
     case CFGPARSER_ERR_SESSION_NOT_OPEN:
-        return "error: got a line without a section";
+        return "got a line without a section";
     case CFGPARSER_ERR_MISSING_EQUAL_SIGN:
-        return "error: missing equal sign in at least one line";
+        return "missing equal sign in at least one line";
     case CFGPARSER_ERR_OPTION_ALREADY_DEFINED:
-        return "error: option defined twice within one section";
+        return "option defined twice within one section";
     case CFGPARSER_ERR_SECTION_NOT_FOUND:
-        return "error: section not found";
+        return "section not found";
     case CFGPARSER_ERR_OPTION_NOT_FOUND:
-        return "error: option not found";
+        return "option not found";
     }
     return "";
 }
@@ -427,8 +419,8 @@ static cfgparser_option_t * cfgparser_new_option(
         cfgparser_section_t * section,
         const char * name,
         cfgparser_tp_t tp,
-        cfgparser_u * val,
-        cfgparser_u * def)
+        cfgparser_via_t * val,
+        cfgparser_via_t * def)
 {
     cfgparser_option_t * current = section->options;
     cfgparser_option_t * prev;

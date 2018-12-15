@@ -1,13 +1,5 @@
 /*
- * forward.c - Handle forwarding series while re-indexing
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 31-07-2016
- *
+ * forward.c - Handle forwarding series while re-indexing.
  */
 #include <qpack/qpack.h>
 #include <siri/async.h>
@@ -17,7 +9,7 @@
 #include <siri/net/protocol.h>
 #include <stddef.h>
 
-static void FORWARD_on_response(slist_t * promises, uv_async_t * handle);
+static void FORWARD_on_response(vec_t * promises, uv_async_t * handle);
 static void FORWARD_free(uv_handle_t * handle);
 
 /*
@@ -36,6 +28,9 @@ siridb_forward_t * siridb_forward_new(siridb_t * siridb)
     }
     else
     {
+        uint32_t psize;
+        size_t n;
+
         forward->free_cb = FORWARD_free;
         forward->ref = 1; /* used as reference on (siri_async_t) handle */
         forward->siridb = siridb;
@@ -50,9 +45,9 @@ siridb_forward_t * siridb_forward_new(siridb_t * siridb)
          * Allocate packers for sending data to pools. we allocate smaller
          * sizes in case we have a lot of pools.
          */
-        uint32_t psize = QP_SUGGESTED_SIZE / ((size / 4) + 1);
+        psize = QP_SUGGESTED_SIZE / ((size / 4) + 1);
 
-        for (size_t n = 0; n < size; n++)
+        for (n = 0; n < size; n++)
         {
             if (n == siridb->server->pool)
             {
@@ -77,8 +72,10 @@ siridb_forward_t * siridb_forward_new(siridb_t * siridb)
  */
 void siridb_forward_free(siridb_forward_t * forward)
 {
+    size_t n;
+
     /* free packer */
-    for (size_t n = 0; n < forward->size; n++)
+    for (n = 0; n < forward->size; n++)
     {
         if (forward->packer[n] != NULL)
         {
@@ -88,10 +85,6 @@ void siridb_forward_free(siridb_forward_t * forward)
 
     /* free forward */
     free(forward);
-
-#if DEBUG
-    log_debug("Free forward!, hooray!");
-#endif
 }
 
 /*
@@ -109,15 +102,15 @@ void siridb_forward_points_to_pools(uv_async_t * handle)
             (sirinet_promises_cb) FORWARD_on_response,
             handle,
             NULL);
+    int pool_count = 0;
+    uint16_t n;
 
     if (promises == NULL)
     {
         return;  /* signal is raised */
     }
 
-    int pool_count = 0;
-
-    for (uint16_t n = 0; n < forward->size; n++)
+    for (n = 0; n < forward->size; n++)
     {
         if (    forward->packer[n] == NULL ||
                 forward->packer[n]->len == sizeof(sirinet_pkg_t) + 1)
@@ -140,7 +133,7 @@ void siridb_forward_points_to_pools(uv_async_t * handle)
                 forward->siridb->pools->pool + n,
                 pkg,
                 0,
-                sirinet_promises_on_response,
+                (sirinet_promise_cb) sirinet_promises_on_response,
                 promises,
                 0))
         {
@@ -167,15 +160,16 @@ void siridb_forward_points_to_pools(uv_async_t * handle)
  *
  * This function can raise a SIGNAL.
  */
-static void FORWARD_on_response(slist_t * promises, uv_async_t * handle)
+static void FORWARD_on_response(vec_t * promises, uv_async_t * handle)
 {
     if (promises != NULL)
     {
         sirinet_pkg_t * pkg;
         sirinet_promise_t * promise;
         siridb_forward_t * forward = (siridb_forward_t *) handle->data;
+        size_t i;
 
-        for (size_t i = 0; i < promises->len; i++)
+        for (i = 0; i < promises->len; i++)
         {
             promise = promises->data[i];
             if (promise == NULL)

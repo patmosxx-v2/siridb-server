@@ -1,18 +1,12 @@
 /*
- * error.h - SiriDB Error.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 30-06-2016
- *
+ * err.h - SiriDB Error.
  */
-#pragma once
+#ifndef SIRI_ERR_H_
+#define SIRI_ERR_H_
 
 #include <logger/logger.h>
 #include <signal.h>
+
 
 /* value should be 0,
  * any other value indicates a critical error has occurred */
@@ -40,4 +34,4 @@ log_critical("Critical error at: %s:%d (%s)",       \
 raise(SIGABRT);                                     \
 if (!siri_err) siri_err = SIGABRT;
 
-
+#endif  /* SIRI_ERR_H_ */

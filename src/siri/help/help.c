@@ -1,13 +1,5 @@
 /*
- * help.c - Help for SiriDB
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 23-09-2016
- *
+ * help.c - Help for SiriDB.
  */
 #include <limits.h>
 #include <logger/logger.h>
@@ -37,8 +29,8 @@ const char * siri_help_get(
          * path must be initialized for xpath_get_exec_path to handle this variable
          * correctly.
          */
-        char path[SIRI_PATH_MAX];
-        char fn[SIRI_PATH_MAX];
+        char path[XPATH_MAX];
+        char fn[XPATH_MAX];
 
         memset(&path, 0, sizeof(path));
 
@@ -52,14 +44,14 @@ const char * siri_help_get(
             {
                 snprintf(
                         fn,
-                        SIRI_PATH_MAX,
+                        XPATH_MAX,
                         "%shelp/help%s.md",
                         path,
                         help_name + 1);
             }
             else
             {
-                snprintf(fn, SIRI_PATH_MAX, "%shelp/%s.md", path, help_name);
+                snprintf(fn, XPATH_MAX, "%shelp/%s.md", path, help_name);
             }
 
             log_debug("Reading help file: '%s'", fn);
@@ -120,11 +112,9 @@ const char * siri_help_get(
  */
 void siri_help_free(void)
 {
-#if DEBUG
-    log_debug("Free help");
-#endif
+    uint_fast16_t i;
 
-    for (uint_fast16_t i = 0; i < HELP_COUNT; i ++)
+    for (i = 0; i < HELP_COUNT; i ++)
     {
         free(siri_help_content[i]);
     }

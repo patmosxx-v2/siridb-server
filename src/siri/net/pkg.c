@@ -1,19 +1,11 @@
 /*
  * pkg.c - SiriDB Package type.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 18-06-2016
- *
  */
 #include <assert.h>
 #include <logger/logger.h>
 #include <siri/err.h>
 #include <siri/net/pkg.h>
-#include <siri/net/socket.h>
+#include <siri/net/clserver.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <string.h>
@@ -21,7 +13,7 @@
 typedef struct pkg_send_s
 {
     sirinet_pkg_t * pkg;
-    uv_stream_t * client;
+    sirinet_stream_t * client;
 } pkg_send_t;
 
 static void PKG_write_cb(uv_write_t * req, int status);
@@ -67,9 +59,7 @@ sirinet_pkg_t * sirinet_pkg_new(
  */
 qp_packer_t * sirinet_packer_new(size_t alloc_size)
 {
-#if DEBUG
     assert (alloc_size >= sizeof(sirinet_pkg_t));
-#endif
 
     qp_packer_t * packer = qp_packer_new(alloc_size);
     if (packer == NULL)
@@ -119,9 +109,7 @@ sirinet_pkg_t * sirinet_pkg_err(
         uint8_t tp,
         const char * msg)
 {
-#if DEBUG
     assert (msg != NULL);
-#endif
 
     sirinet_pkg_t * pkg;
     qp_packer_t * packer = sirinet_packer_new(len + 20 + sizeof(sirinet_pkg_t));
@@ -145,7 +133,7 @@ sirinet_pkg_t * sirinet_pkg_err(
  *
  * Note: pkg will be freed after calling this function.
  */
-int sirinet_pkg_send(uv_stream_t * client, sirinet_pkg_t * pkg)
+int sirinet_pkg_send(sirinet_stream_t * client, sirinet_pkg_t * pkg)
 {
     uv_write_t * req = (uv_write_t *) malloc(sizeof(uv_write_t));
 
@@ -167,7 +155,7 @@ int sirinet_pkg_send(uv_stream_t * client, sirinet_pkg_t * pkg)
     }
 
     /* increment client reference counter */
-    sirinet_socket_incref(client);
+    sirinet_stream_incref(client);
 
     data->client = client;
     data->pkg = pkg;
@@ -180,7 +168,7 @@ int sirinet_pkg_send(uv_stream_t * client, sirinet_pkg_t * pkg)
             (char *) pkg,
             sizeof(sirinet_pkg_t) + pkg->len);
 
-    uv_write(req, client, &wrbuf, 1, PKG_write_cb);
+    uv_write(req, client->stream, &wrbuf, 1, PKG_write_cb);
 
     return 0;
 }
@@ -213,7 +201,7 @@ static void PKG_write_cb(uv_write_t * req, int status)
 
     pkg_send_t * data = (pkg_send_t *) req->data;
 
-    sirinet_socket_decref(data->client);
+    sirinet_stream_decref(data->client);
 
     free(data->pkg);
     free(data);

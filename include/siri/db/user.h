@@ -1,32 +1,16 @@
 /*
- * user.h - contains functions for a SiriDB database member.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 10-03-2016
- *
+ * user.h - Contains functions for a SiriDB database user.
  */
-#pragma once
+#ifndef SIRIDB_USER_H_
+#define SIRIDB_USER_H_
+
+typedef struct siridb_user_s siridb_user_t;
 
 #include <qpack/qpack.h>
 #include <inttypes.h>
 #include <siri/db/db.h>
 #include <siri/db/access.h>
 #include <cexpr/cexpr.h>
-
-typedef struct siridb_s siridb_t;
-
-typedef struct siridb_user_s
-{
-    uint16_t ref;
-    uint16_t pad0;
-    uint32_t access_bit;
-    char * name;
-    char * password; /* keeps an encrypted password */
-} siridb_user_t;
 
 siridb_user_t * siridb_user_new(void);
 void siridb_user_prop(siridb_user_t * user, qp_packer_t * packer, int prop);
@@ -59,3 +43,13 @@ int siridb_user_cexpr_cb(siridb_user_t * user, cexpr_condition_t * cond);
  */
 #define siridb_user_decref(user__) \
     if (!--user__->ref) siridb__user_free(user__)
+
+struct siridb_user_s
+{
+    uint16_t ref;
+    uint16_t pad0;
+    uint32_t access_bit;
+    char * name;
+    char * password; /* keeps an encrypted password */
+};
+#endif  /* SIRIDB_USER_H_ */

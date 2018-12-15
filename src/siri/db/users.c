@@ -1,13 +1,5 @@
 /*
- * users.c - contains functions for a SiriDB database members.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 04-05-2016
- *
+ * users.c - Collection of database users.
  */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
@@ -17,9 +9,10 @@
 #include <qpack/qpack.h>
 #include <siri/db/query.h>
 #include <siri/db/users.h>
+#include <siri/db/misc.h>
 #include <siri/err.h>
 #include <stdlib.h>
-#include <strextra/strextra.h>
+#include <xstr/xstr.h>
 #include <string.h>
 #include <time.h>
 #include <xpath/xpath.h>
@@ -67,7 +60,7 @@ int siridb_users_load(siridb_t * siridb)
     }
 
     /* get user access file name */
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_USERS_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_USERS_FN)
 
     if (!xpath_file_exist(fn))
     {
@@ -98,7 +91,7 @@ int siridb_users_load(siridb_t * siridb)
     }
 
     /* unpacker will be freed in case macro fails */
-    siridb_schema_check(SIRIDB_USERS_SCHEMA)
+    siridb_misc_schema_check(SIRIDB_USERS_SCHEMA)
 
     int rc = 0;
     while (qp_is_array(qp_next(unpacker, NULL)) &&
@@ -154,7 +147,7 @@ int siridb_users_load(siridb_t * siridb)
 ssize_t siridb_users_get_file(char ** buffer, siridb_t * siridb)
 {
     /* get users file name */
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_USERS_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_USERS_FN)
 
     return xpath_get_content(buffer, fn);
 }
@@ -206,10 +199,11 @@ int siridb_users_add_user(
  * the user will be returned when found.
  */
 siridb_user_t * siridb_users_get_user(
-        llist_t * users,
+        siridb_t * siridb,
         const char * name,
         const char * password)
 {
+    llist_t * users = siridb->users;
     siridb_user_t * user;
     char pw[OWCRYPT_SZ];
 
@@ -218,7 +212,6 @@ siridb_user_t * siridb_users_get_user(
     char * fallback_pw;
     struct crypt_data fallback_data;
 #endif
-
 
     if ((user = llist_get(
             users,
@@ -242,9 +235,15 @@ siridb_user_t * siridb_users_get_user(
     /* Required for compatibility with version < 2.0.14 */
     else if (user->password[0] == '$')
     {
+        /* this will migrate as soon as a user logs in */
+        _Bool is_valid;
         fallback_data.initialized = 0;
         fallback_pw = crypt_r(password, user->password, &fallback_data);
-        return (strcmp(fallback_pw, user->password) == 0) ? user : NULL;
+        is_valid = strcmp(fallback_pw, user->password) == 0;
+        (void) (is_valid && \
+                siridb_user_set_password(user, password, NULL) == 0 && \
+                siridb_users_save(siridb));
+        return is_valid ? user : NULL;
     }
 #endif
     return NULL;
@@ -297,7 +296,7 @@ int siridb_users_save(siridb_t * siridb)
     qp_fpacker_t * fpacker;
 
     /* get user access file name */
-    SIRIDB_GET_FN(fn, siridb->dbpath, SIRIDB_USERS_FN)
+    siridb_misc_get_fn(fn, siridb->dbpath, SIRIDB_USERS_FN)
 
     if (
         /* open a new user file */

@@ -1,12 +1,6 @@
 /*
- * siri.h - global methods for SiriDB.
+ * siri.c - Root for SiriDB.
  *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 08-03-2016
  *
  * Info siri->siridb_mutex:
  *
@@ -23,9 +17,10 @@
 #include <assert.h>
 #include <logger/logger.h>
 #include <qpack/qpack.h>
-#include <siri/admin/account.h>
-#include <siri/admin/request.h>
+#include <siri/service/account.h>
+#include <siri/service/request.h>
 #include <siri/async.h>
+#include <siri/buffersync.h>
 #include <siri/cfg/cfg.h>
 #include <siri/db/aggregate.h>
 #include <siri/db/buffer.h>
@@ -36,17 +31,18 @@
 #include <siri/db/server.h>
 #include <siri/db/servers.h>
 #include <siri/db/users.h>
+#include <siri/db/listener.h>
 #include <siri/err.h>
 #include <siri/help/help.h>
 #include <siri/net/bserver.h>
 #include <siri/net/clserver.h>
-#include <siri/net/socket.h>
-#include <siri/parser/listener.h>
+#include <siri/net/pipe.h>
+#include <siri/net/stream.h>
 #include <siri/siri.h>
 #include <siri/version.h>
 #include <stddef.h>
 #include <stdio.h>
-#include <strextra/strextra.h>
+#include <xstr/xstr.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -67,7 +63,7 @@ static void SIRI_walk_try_close(uv_handle_t * handle, int * num);
 #define WAIT_BETWEEN_CLOSE_ATTEMPTS 3000
 
 static uv_timer_t closing_timer;
-static int closing_attempts = 40;  // times 3 seconds is 2 minutes
+static int closing_attempts = 40;  /* times 3 seconds is 2 minutes  */
 
 #define N_SIGNALS 6
 static int signals[N_SIGNALS] = {
@@ -85,6 +81,7 @@ siri_t siri = {
         .fh=NULL,
         .optimize=NULL,
         .heartbeat=NULL,
+        .buffersync=NULL,
         .cfg=NULL,
         .args=NULL,
         .status=SIRI_STATUS_LOADING,
@@ -92,7 +89,7 @@ siri_t siri = {
         .accounts=NULL,
         .dbname_regex=NULL,
         .dbname_match_data=NULL,
-        .socket=NULL};
+        .client=NULL};
 
 void siri_setup_logger(void)
 {
@@ -100,7 +97,7 @@ void siri_setup_logger(void)
     char lname[255];
     size_t len = strlen(siri.args->log_level);
 
-#ifndef DEBUG
+#ifdef NDEBUG
     /* force colors while debugging... */
     if (siri.args->log_colorized)
 #endif
@@ -111,7 +108,7 @@ void siri_setup_logger(void)
     for (n = 0; n < LOGGER_NUM_LEVELS; n++)
     {
         strcpy(lname, LOGGER_LEVEL_NAMES[n]);
-        strx_lower_case(lname);
+        xstr_lower_case(lname);
         if (strlen(lname) == len && strcmp(siri.args->log_level, lname) == 0)
         {
             logger_init(stdout, n);
@@ -130,12 +127,13 @@ int siri_start(void)
     struct timespec start;
     struct timespec end;
     uv_signal_t sig[N_SIGNALS];
+    int i;
 
     /* get start time so we can calculate the startup_time */
     clock_gettime(CLOCK_MONOTONIC, &start);
 
     /* initialize listener (set enter and exit functions) */
-    siriparser_init_listener();
+    siridb_init_listener();
 
     /* initialize props (set props functions) */
     siridb_init_props();
@@ -165,8 +163,8 @@ int siri_start(void)
     uv_loop_init(siri.loop);
 
     /* initialize the back-end-, client- server and load databases */
-    if (    (rc = siri_admin_account_init(&siri)) ||
-            (rc = siri_admin_request_init()) ||
+    if (    (rc = siri_service_account_init(&siri)) ||
+            (rc = siri_service_request_init()) ||
             (rc = sirinet_bserver_init(&siri)) ||
             (rc = sirinet_clserver_init(&siri)) ||
             (rc = SIRI_load_databases()))
@@ -174,11 +172,11 @@ int siri_start(void)
         SIRI_destroy();
         free(siri.loop);
         siri.loop = NULL;
-        return rc; // something went wrong
+        return rc;  /* something went wrong  */
     }
 
     /* bind signals to the event loop */
-    for (int i = 0; i < N_SIGNALS; i++)
+    for (i = 0; i < N_SIGNALS; i++)
     {
         uv_signal_init(siri.loop, &sig[i]);
         uv_signal_start(&sig[i], SIRI_signal_handler, signals[i]);
@@ -189,6 +187,9 @@ int siri_start(void)
 
     /* initialize heart-beat task (bind siri.heartbeat) */
     siri_heartbeat_init(&siri);
+
+    /* initialize buffer-sync task (bind siri.buffersync) */
+    siri_buffersync_init(&siri);
 
     /* initialize backup (bind siri.backup) */
     if (siri_backup_init(&siri))
@@ -219,7 +220,7 @@ void siri_free(void)
     {
         int rc;
         rc = uv_loop_close(siri.loop);
-        if (rc) // could be UV_EBUSY (-16) in case handlers are not closed yet
+        if (rc) /* could be UV_EBUSY (-16) in case handlers are not closed */
         {
             log_error("Error occurred while closing the event loop: %d", rc);
         }
@@ -234,11 +235,11 @@ void siri_free(void)
     /* free siridb grammar */
     cleri_grammar_free(siri.grammar);
 
-    /* free siridb administrative accounts */
-    siri_admin_account_destroy(&siri);
+    /* free siridb service accounts */
+    siri_service_account_destroy(&siri);
 
-    /* free siridb admin request */
-    siri_admin_request_destroy();
+    /* free siridb service request */
+    siri_service_request_destroy();
 
     /* free config */
     siri_cfg_destroy(&siri);
@@ -323,13 +324,7 @@ next:
 
 static void SIRI_destroy(void)
 {
-#ifndef DEBUG
-    log_info("Closing SiriDB Server (version: %s)", SIRIDB_VERSION);
-#else
-    log_warning("Closing SiriDB Server (%s-DEBUG-RELEASE-%s)",
-            SIRIDB_VERSION,
-            SIRIDB_BUILD_DATE);
-#endif
+    log_warning("Closing SiriDB Server (version: %s)", SIRIDB_VERSION);
     /* stop the event loop */
     uv_stop(siri.loop);
 
@@ -446,6 +441,9 @@ static void SIRI_signal_handler(
         /* stop heart-beat task */
         siri_heartbeat_stop(&siri);
 
+        /* stop buffer-sync task */
+        siri_buffersync_stop(&siri);
+
         /* destroy backup (mode) task */
         siri_backup_destroy(&siri);
 
@@ -490,24 +488,20 @@ static void SIRI_walk_close_handlers(
 
     switch (handle->type)
     {
-    case UV_WORK:
-        break;
     case UV_SIGNAL:
         /* this is where we cleanup the signal handlers */
         uv_close(handle, NULL);
         break;
 
     case UV_TCP:
-        /* This can be a TCP server with data set to NULL or a SiriDB socket
-         * which should be destroyed.
-         */
+    case UV_NAMED_PIPE:
         if (handle->data == NULL)
         {
             uv_close(handle, NULL);
         }
         else
         {
-            sirinet_socket_decref(handle);
+            sirinet_stream_decref((sirinet_stream_t *) handle->data);
         }
         break;
 
@@ -515,7 +509,7 @@ static void SIRI_walk_close_handlers(
         /* we do not expect any timer object since they should all be closed
          * (or at least closing) at this point.
          */
-#if DEBUG
+#ifndef NDEBUG
         LOGC(   "Found a non closing Timer, all timers should "
                 "be stopped at this point.");
 #endif
@@ -524,7 +518,7 @@ static void SIRI_walk_close_handlers(
         break;
 
     case UV_ASYNC:
-#if DEBUG
+#ifndef NDEBUG
         LOGC(   "An async task is only expected to be found in case "
                 "not all tasks were closed within the timeout limit, "
                 "or when a critical signal error is raised.");
@@ -534,7 +528,7 @@ static void SIRI_walk_close_handlers(
 
     default:
 
-#if DEBUG
+#ifndef NDEBUG
         LOGC("Oh oh, we might need to implement type %d", handle->type);
         assert(0);
 #endif

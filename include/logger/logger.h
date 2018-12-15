@@ -1,20 +1,14 @@
 /*
- * logger.h - log module
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 08-03-2016
- *
+ * logger.h - Logging module.
  */
-#pragma once
+#ifndef LOGGER_H_
+#define LOGGER_H_
 
+#include <stdio.h>
 #ifdef __APPLE__
-#define _LOGGER_IO_FILE __sFILE
+typedef struct __sFILE LOGGER_IO_FILE;
 #else
-#define _LOGGER_IO_FILE _IO_FILE
+typedef struct _IO_FILE LOGGER_IO_FILE;
 #endif
 
 #define LOGGER_DEBUG 0
@@ -27,17 +21,11 @@
 
 #define LOGGER_FLAG_COLORED 1
 
-typedef struct logger_s
-{
-    struct _LOGGER_IO_FILE * ostream;
-    int level;
-    const char * level_name;
-    int flags;
-} logger_t;
+typedef struct logger_s logger_t;
 
 const char * LOGGER_LEVEL_NAMES[LOGGER_NUM_LEVELS];
 
-void logger_init(struct _LOGGER_IO_FILE * ostream, int log_level);
+void logger_init(LOGGER_IO_FILE * ostream, int log_level);
 void logger_set_level(int log_level);
 const char * logger_level_name(int log_level);
 
@@ -73,3 +61,12 @@ extern logger_t Logger;
     fprintf(Logger.ostream, "%s:%d ", __FILE__, __LINE__); \
     log_critical(fmt, ##__VA_ARGS__)
 
+struct logger_s
+{
+    LOGGER_IO_FILE * ostream;
+    int level;
+    const char * level_name;
+    int flags;
+};
+
+#endif  /* LOGGER_H_ */

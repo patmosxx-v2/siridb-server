@@ -1,43 +1,40 @@
 /*
- * promise.h - Promise SiriDB.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- *
- * changes
- *  - initial version, 21-06-2016
- *
+ * promise.c - Promise used for sending to data to SiriDB servers.
  */
-#pragma once
+#ifndef SIRINET_PROMISE_H_
+#define SIRINET_PROMISE_H_
 
-#include <uv.h>
-#include <siri/net/socket.h>
-#include <siri/db/server.h>
-#include <siri/net/pkg.h>
-
-#define PROMISE_DEFAULT_TIMEOUT 30000  // 30 seconds
-
-typedef struct siridb_server_s siridb_server_t;
-typedef struct sirinet_promise_s sirinet_promise_t;
+#define PROMISE_DEFAULT_TIMEOUT 30000  /* 30 seconds  */
 
 typedef enum
 {
-    PROMISE_TIMEOUT_ERROR=-4,   // in case of a time out
-    PROMISE_WRITE_ERROR,        // socket write error
-    PROMISE_CANCELLED_ERROR,    // timer is cancelled
-    PROMISE_PKG_TYPE_ERROR,     // unexpected package type received
+    PROMISE_TIMEOUT_ERROR=-4,   /* in case of a time out            */
+    PROMISE_WRITE_ERROR,        /* socket write error               */
+    PROMISE_CANCELLED_ERROR,    /* timer is cancelled               */
+    PROMISE_PKG_TYPE_ERROR,     /* unexpected package type received */
     PROMISE_SUCCESS=0
 } sirinet_promise_status_t;
 
+typedef struct sirinet_promise_s sirinet_promise_t;
 typedef void (* sirinet_promise_cb)(
         sirinet_promise_t * promise,
-        sirinet_pkg_t * pkg,
+        void * data,
         int status);
 
+#include <uv.h>
+#include <siri/net/stream.h>
+#include <siri/db/server.h>
+#include <siri/net/pkg.h>
+
+
+
+const char * sirinet_promise_strstatus(sirinet_promise_status_t status);
+
+#define sirinet_promise_incref(promise) promise->ref++
+#define sirinet_promise_decref(promise) if (!--promise->ref) free(promise)
+
 /* the callback will always be called and is responsible to free the promise */
-typedef struct sirinet_promise_s
+struct sirinet_promise_s
 {
     uint16_t pid;
     uint16_t ref;
@@ -46,9 +43,6 @@ typedef struct sirinet_promise_s
     siridb_server_t * server;
     sirinet_pkg_t * pkg;
     void * data;
-} sirinet_promise_t;
+};
 
-const char * sirinet_promise_strstatus(sirinet_promise_status_t status);
-
-#define sirinet_promise_incref(promise) promise->ref++
-#define sirinet_promise_decref(promise) if (!--promise->ref) free(promise)
+#endif  /* SIRINET_PROMISE_H_ */

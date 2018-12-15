@@ -1,13 +1,5 @@
 /*
  * auth.c - Handle SiriDB authentication.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 10-03-2016
- *
  */
 #include <assert.h>
 #include <logger/logger.h>
@@ -16,14 +8,14 @@
 #include <siri/db/servers.h>
 #include <siri/db/users.h>
 #include <siri/net/protocol.h>
-#include <siri/net/socket.h>
+#include <siri/net/stream.h>
 #include <siri/siri.h>
 #include <siri/version.h>
 #include <stdlib.h>
 #include <string.h>
 
 cproto_server_t siridb_auth_user_request(
-        uv_stream_t * client,
+        sirinet_stream_t * client,
         qp_obj_t * qp_username,
         qp_obj_t * qp_password,
         qp_obj_t * qp_dbname)
@@ -50,7 +42,7 @@ cproto_server_t siridb_auth_user_request(
     }
 
     if ((user = siridb_users_get_user(
-            siridb->users,
+            siridb,
             username,
             password)) == NULL)
     {
@@ -58,8 +50,9 @@ cproto_server_t siridb_auth_user_request(
         return CPROTO_ERR_AUTH_CREDENTIALS;
     }
 
-    ((sirinet_socket_t *) client->data)->siridb = siridb;
-    ((sirinet_socket_t *) client->data)->origin = user;
+    client->siridb = siridb;
+    client->origin = user;
+
     siridb_user_incref(user);
 
     return CPROTO_RES_AUTH_SUCCESS;
@@ -70,7 +63,7 @@ cproto_server_t siridb_auth_user_request(
  * null terminated.
  */
 bproto_server_t siridb_auth_server_request(
-        uv_stream_t * client,
+        sirinet_stream_t * client,
         qp_obj_t * qp_uuid,
         qp_obj_t * qp_dbname,
         qp_obj_t * qp_version,
@@ -116,8 +109,8 @@ bproto_server_t siridb_auth_server_request(
         return BPROTO_AUTH_ERR_UNKNOWN_UUID;
     }
 
-    ((sirinet_socket_t *) client->data)->siridb = siridb;
-    ((sirinet_socket_t *) client->data)->origin = server;
+    client->siridb = siridb;
+    client->origin = server;
 
     free(server->version);
     server->version = strdup((const char *) qp_version->via.raw);
@@ -127,4 +120,3 @@ bproto_server_t siridb_auth_server_request(
 
     return BPROTO_AUTH_SUCCESS;
 }
-

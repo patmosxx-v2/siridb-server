@@ -1,15 +1,8 @@
 /*
- * lookup.h - SiriDB Pool lookup.
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 29-07-2016
- *
+ * lookup.h - Find and assign to which pool series belong.
  */
-#pragma once
+#ifndef SIRIDB_LOOKUP_H_
+#define SIRIDB_LOOKUP_H_
 
 #include <inttypes.h>
 #include <stddef.h>
@@ -25,3 +18,5 @@ uint16_t siridb_lookup_sn_raw(
         size_t len);
 siridb_lookup_t * siridb_lookup_new(uint_fast16_t num_pools);
 void siridb_lookup_free(siridb_lookup_t * lookup);
+
+#endif  /* SIRIDB_LOOKUP_H_ */

@@ -1,15 +1,8 @@
 /*
- * qpack.h - efficient binary serialization format
- *
- * author       : Jeroen van der Heijden
- * email        : jeroen@transceptor.technology
- * copyright    : 2016, Transceptor Technology
- *
- * changes
- *  - initial version, 11-03-2016
- *
+ * qpack.h - Efficient binary serialization format.
  */
-#pragma once
+#ifndef QPACK_H_
+#define QPACK_H_
 
 #include <inttypes.h>
 #include <stdlib.h>
@@ -24,9 +17,9 @@ typedef enum
      * Values with -##- will never be returned while unpacking. For example
      * a QP_INT8 (1 byte signed integer) will be returned as QP_INT64.
      */
-    QP_END,             // at the end while unpacking
-    QP_ERR,             // error
-    QP_RAW,             // raw string
+    QP_END,             /* at the end while unpacking   */
+    QP_ERR,             /* error                        */
+    QP_RAW,             /* raw string                   */
     /*
      * Both END and RAW are never actually packed but 0 and 1 are reserved
      * for positive signed integers.
@@ -36,78 +29,84 @@ typedef enum
      * Fixed negative integers from -60 till -1     [ 64...123 ]
      *
      */
-    QP_HOOK=124,        // Hook is not used by SiriDB
-    QP_DOUBLE_N1=125,   // ## double value -1.0
-    QP_DOUBLE_0,        // ## double value 0.0
-    QP_DOUBLE_1,        // ## double value 1.0
+    QP_HOOK=124,        /* Hook is not used by SiriDB       */
+    QP_DOUBLE_N1=125,   /* ## double value -1.0             */
+    QP_DOUBLE_0,        /* ## double value 0.0              */
+    QP_DOUBLE_1,        /* ## double value 1.0              */
     /*
      * Fixed raw strings lengths from 0 till 99     [ 128...227 ]
      */
-    QP_RAW8=228,        // ## raw string with length < 1 byte
-    QP_RAW16,           // ## raw string with length < 1 byte
-    QP_RAW32,           // ## raw string with length < 1 byte
-    QP_RAW64,           // ## raw string with length < 1 byte
-    QP_INT8,            // ## 1 byte signed integer
-    QP_INT16,           // ## 2 byte signed integer
-    QP_INT32,           // ## 4 byte signed integer
-    QP_INT64,           // 8 bytes signed integer
-    QP_DOUBLE,          // 8 bytes double
-    QP_ARRAY0,          // empty array
-    QP_ARRAY1,          // array with 1 item
-    QP_ARRAY2,          // array with 2 items
-    QP_ARRAY3,          // array with 3 items
-    QP_ARRAY4,          // array with 4 items
-    QP_ARRAY5,          // array with 5 items
-    QP_MAP0,            // empty map
-    QP_MAP1,            // map with 1 item
-    QP_MAP2,            // map with 2 items
-    QP_MAP3,            // map with 3 items
-    QP_MAP4,            // map with 4 items
-    QP_MAP5,            // map with 5 items
-    QP_TRUE,            // boolean true
-    QP_FALSE,           // boolean false
-    QP_NULL,            // null (none, nil)
-    QP_ARRAY_OPEN,      // open a new array
-    QP_MAP_OPEN,        // open a new map
-    QP_ARRAY_CLOSE,     // close array
-    QP_MAP_CLOSE,       // close map
+    QP_RAW8=228,        /* ## raw string with length < 1 byte   */
+    QP_RAW16,           /* ## raw string with length < 1 byte   */
+    QP_RAW32,           /* ## raw string with length < 1 byte   */
+    QP_RAW64,           /* ## raw string with length < 1 byte   */
+    QP_INT8,            /* ## 1 byte signed integer             */
+    QP_INT16,           /* ## 2 byte signed integer             */
+    QP_INT32,           /* ## 4 byte signed integer             */
+    QP_INT64,           /* 8 bytes signed integer               */
+    QP_DOUBLE,          /* 8 bytes double                       */
+    QP_ARRAY0,          /* empty array                          */
+    QP_ARRAY1,          /* array with 1 item                    */
+    QP_ARRAY2,          /* array with 2 items                   */
+    QP_ARRAY3,          /* array with 3 items                   */
+    QP_ARRAY4,          /* array with 4 items                   */
+    QP_ARRAY5,          /* array with 5 items                   */
+    QP_MAP0,            /* empty map                            */
+    QP_MAP1,            /* map with 1 item                      */
+    QP_MAP2,            /* map with 2 items                     */
+    QP_MAP3,            /* map with 3 items                     */
+    QP_MAP4,            /* map with 4 items                     */
+    QP_MAP5,            /* map with 5 items                     */
+    QP_TRUE,            /* boolean true                         */
+    QP_FALSE,           /* boolean false                        */
+    QP_NULL,            /* null (none, nil)                     */
+    QP_ARRAY_OPEN,      /* open a new array                     */
+    QP_MAP_OPEN,        /* open a new map                       */
+    QP_ARRAY_CLOSE,     /* close array                          */
+    QP_MAP_CLOSE,       /* close map                            */
 } qp_types_t;
 
-typedef union qp_via_u
+typedef union qp_via_u qp_via_t;
+typedef struct qp_obj_s qp_obj_t;
+typedef struct qp_unpacker_s qp_unpacker_t;
+typedef struct qp_packer_s qp_packer_t;
+typedef FILE qp_fpacker_t;
+
+union qp_via_u
 {
     int64_t int64;
     uint64_t uint64;
     double real;
     unsigned char * raw;
     char * str;
-} qp_via_t;
+};
 
-typedef struct qp_obj_s
+struct qp_obj_s
 {
     uint8_t tp;
     size_t len;
     qp_via_t via;
-} qp_obj_t;
+};
 
-typedef struct qp_unpacker_s
+struct qp_unpacker_s
 {
-    unsigned char * source; // can be NULL or a copy or the source
+    unsigned char * source; /* can be NULL or a copy or the source  */
     unsigned char * pt;
     unsigned char * end;
-} qp_unpacker_t;
+};
 
-typedef struct qp_packer_s
+struct qp_packer_s
 {
     size_t len;
     size_t buffer_size;
     size_t alloc_size;
     unsigned char * buffer;
-} qp_packer_t;
+};
 
-typedef FILE qp_fpacker_t;
-#define qp_open fopen    // returns NULL in case of an error
-#define qp_close fclose   // 0 if successful, EOF in case of an error
-#define qp_flush fflush   // 0 if successful, EOF in case of an error
+
+#define qp_open fopen     /* returns NULL in case of an error           */
+#define qp_close fclose   /* 0 if successful, EOF in case of an error   */
+#define qp_flush fflush   /* 0 if successful, EOF in case of an error   */
 
 /* packer: create, destroy and extend functions */
 qp_packer_t * qp_packer_new(size_t alloc_size);
@@ -165,7 +164,7 @@ static inline int qp_is_raw_term(qp_obj_t * qp_obj)
 {
     return (qp_obj->tp == QP_RAW &&
             qp_obj->len &&
-            qp_obj->via.raw[qp_obj->len - 1] == '\0');
+            (char) qp_obj->via.raw[qp_obj->len - 1] == '\0');
 }
 
 /* Add to packer functions */
@@ -202,4 +201,4 @@ unsigned char BUF__[3];\
 BUF__[0] = QP_INT16; \
 memcpy(&BUF__[1], &N__, 2);
 
-
+#endif  /* QPACK_H_ */
